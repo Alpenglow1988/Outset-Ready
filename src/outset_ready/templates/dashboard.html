@@ -23,6 +23,12 @@
       </aside>
 
       <main>
+        {% if preview_mode %}
+          <aside class="preview-banner" aria-label="Preview environment">
+            <strong>Preview mode</strong>
+            <span>This hosted view uses temporary sample storage, so entries may reset. Your personal SQLite and Garmin data stay local.</span>
+          </aside>
+        {% endif %}
         <header class="page-header">
           <div>
             <p class="eyebrow">Your current read</p>
@@ -43,6 +49,35 @@
           <div class="data-count">
             <strong>{{ evidence_days }}</strong>
             <span>evidence day{% if evidence_days != 1 %}s{% endif %}</span>
+          </div>
+        </section>
+
+        <section class="source-strip" aria-label="Evidence sources">
+          <div class="source-heading">
+            <p class="eyebrow">Sources</p>
+            <h2>How Ready builds the picture</h2>
+          </div>
+          <div class="source-item">
+            <div class="source-meta">
+              <strong>Garmin</strong>
+              {% if garmin_sync %}
+                <span>{{ garmin_sync.status.value | replace('_', ' ') }}</span>
+              {% else %}
+                <span>Ready to connect</span>
+              {% endif %}
+            </div>
+            {% if garmin_sync %}
+              <p>Synced through {{ garmin_sync.end_date.strftime('%d %b %Y') }}. {{ garmin_sync.daily_records }} daily records and {{ garmin_sync.activity_records }} activities processed.</p>
+            {% else %}
+              <p>Run <code>python -m outset_ready.cli sync-garmin --days 7</code> when your local credentials are ready.</p>
+            {% endif %}
+          </div>
+          <div class="source-item">
+            <div class="source-meta">
+              <strong>Manual</strong>
+              <span>Available</span>
+            </div>
+            <p>Add only the evidence Garmin does not hold, or use manual entry as the fallback.</p>
           </div>
         </section>
 
@@ -82,7 +117,7 @@
                 <h2>Recent entries</h2>
               </div>
             </div>
-            {% if evidence %}
+            {% if evidence or activities %}
               <ol class="evidence-list">
                 {% for item in evidence %}
                   <li>
@@ -91,6 +126,13 @@
                     <strong>
                       {% if item.value is not none %}{{ '%g' | format(item.value) }} {{ item.unit or '' }}{% else %}{{ item.note }}{% endif %}
                     </strong>
+                  </li>
+                {% endfor %}
+                {% for activity in activities %}
+                  <li>
+                    <span class="evidence-date">{{ activity.recorded_on.strftime('%d %b') }}</span>
+                    <span class="evidence-kind">{{ activity.activity_type.value | replace('_', ' ') }}</span>
+                    <strong>{{ activity.name or 'Garmin activity' }}{% if activity.duration_seconds %} · {{ (activity.duration_seconds / 60) | round | int }} min{% endif %}</strong>
                   </li>
                 {% endfor %}
               </ol>
