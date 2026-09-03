@@ -2,7 +2,14 @@ from datetime import date
 
 import pytest
 
-from outset_ready.domain import EvidenceKind, GoalPriority
+from outset_ready.domain import (
+    ActivityRecord,
+    ActivityType,
+    DailyObservation,
+    EvidenceKind,
+    EvidenceSource,
+    GoalPriority,
+)
 from outset_ready.storage import (
     add_manual_evidence,
     connect,
@@ -10,6 +17,8 @@ from outset_ready.storage import (
     init_db,
     list_goals,
     list_recent_evidence,
+    upsert_activity,
+    upsert_daily_observation,
 )
 
 
@@ -76,3 +85,41 @@ def test_evidence_days_count_distinct_dates(tmp_path):
             )
         assert count_evidence_days(conn) == 1
 
+
+def test_optional_context_does_not_count_as_goal_evidence(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        add_manual_evidence(
+            conn,
+            recorded_on=date(2026, 9, 3),
+            kind=EvidenceKind.ALCOHOL_UNITS,
+            value=3,
+        )
+        assert count_evidence_days(conn) == 0
+
+
+def test_garmin_observations_and_activities_count_as_evidence(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        upsert_daily_observation(
+            conn,
+            DailyObservation(
+                recorded_on=date(2026, 9, 2),
+                source=EvidenceSource.GARMIN,
+                sleep_hours=7.2,
+            ),
+        )
+        upsert_activity(
+            conn,
+            ActivityRecord(
+                source=EvidenceSource.GARMIN,
+                external_id="activity-1",
+                recorded_on=date(2026, 9, 3),
+                activity_type=ActivityType.RUN,
+            ),
+        )
+        assert count_evidence_days(conn) == 2
