@@ -14,6 +14,8 @@ def test_dashboard_shows_reference_goal_stack(tmp_path):
     assert "Reach 85 kg" in response.text
     assert "Ultra Mirage El Djerid 50 km" in response.text
     assert "never require them" in response.text
+    assert "/static/outset-mark.svg" in response.text
+    assert client.get("/static/outset-mark.svg").status_code == 200
 
 
 def test_manual_evidence_is_persisted_and_rendered(tmp_path):
@@ -42,4 +44,3 @@ def test_manual_evidence_is_persisted_and_rendered(tmp_path):
 def test_health_endpoint(tmp_path):
     client = TestClient(create_app(tmp_path / "ready.sqlite"))
     assert client.get("/health").json() == {"status": "ok"}
-
