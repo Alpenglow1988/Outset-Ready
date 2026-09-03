@@ -18,17 +18,18 @@
           <span class="nav-link disabled">Week in progress</span>
           <span class="nav-link disabled">Goals</span>
           <span class="nav-link disabled">Events</span>
+          <a class="nav-link" href="/connections">Connections</a>
         </nav>
-        <p class="sidebar-note">Personal V1<br>Local data only</p>
+        <div class="sidebar-footer">
+          <p class="sidebar-note">{{ owner_email }}<br>{% if persistent_storage %}Persistent private data{% else %}Local development data{% endif %}</p>
+          <form class="logout-form" method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="nav-link logout-button" type="submit">Sign out</button>
+          </form>
+        </div>
       </aside>
 
       <main>
-        {% if preview_mode %}
-          <aside class="preview-banner" aria-label="Preview environment">
-            <strong>Preview mode</strong>
-            <span>This hosted view uses temporary sample storage, so entries may reset. Your personal SQLite and Garmin data stay local.</span>
-          </aside>
-        {% endif %}
         <header class="page-header">
           <div>
             <p class="eyebrow">Your current read</p>
@@ -69,7 +70,7 @@
             {% if garmin_sync %}
               <p>Synced through {{ garmin_sync.end_date.strftime('%d %b %Y') }}. {{ garmin_sync.daily_records }} daily records and {{ garmin_sync.activity_records }} activities processed.</p>
             {% else %}
-              <p>Run <code>python -m outset_ready.cli sync-garmin --days 7</code> when your local credentials are ready.</p>
+              <p><a class="text-link" href="/connections">View the connection status</a>. Hosted Garmin sign-in arrives in Build #5.</p>
             {% endif %}
           </div>
           <div class="source-item">
@@ -163,6 +164,7 @@
             <h2>Add useful evidence</h2>
             <p>Garmin will do most of this later. Manual entry always remains available.</p>
             <form method="post" action="/evidence">
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <label>
                 Date
                 <input type="date" name="recorded_on" value="{{ today }}" required>

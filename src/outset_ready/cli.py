@@ -4,6 +4,7 @@ import argparse
 import getpass
 from datetime import date
 
+from outset_ready.auth import hash_password
 from outset_ready.connectors.garmin.client import GarminConnectorError
 from outset_ready.connectors.garmin.config import load_garmin_settings
 from outset_ready.connectors.garmin.sync import sync_garmin
@@ -24,11 +25,28 @@ def build_parser() -> argparse.ArgumentParser:
     sync_parser.add_argument("--days", type=_positive_int, default=7)
     sync_parser.add_argument("--end-date", type=date.fromisoformat, default=date.today())
     sync_parser.add_argument("--activity-page-size", type=_positive_int, default=50)
+    subparsers.add_parser(
+        "hash-password",
+        help="Generate the owner password hash for application settings.",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "hash-password":
+        password = getpass.getpass("Owner password: ")
+        confirmation = getpass.getpass("Confirm owner password: ")
+        if password != confirmation:
+            print("Passwords did not match.")
+            return 1
+        try:
+            print(hash_password(password))
+        except ValueError as exc:
+            print(exc)
+            return 1
+        return 0
+
     if args.command != "sync-garmin":
         return 2
 
@@ -64,4 +82,3 @@ def _positive_int(value: str) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
