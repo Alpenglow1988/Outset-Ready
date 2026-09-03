@@ -1,0 +1,30 @@
+[
+  {
+    "activityId": 12345,
+    "activityName": "Synthetic morning run",
+    "activityType": {
+      "typeKey": "running"
+    },
+    "averageHR": 145,
+    "calories": 750,
+    "distanceInMeters": 10000,
+    "durationInMilliseconds": 3600000,
+    "elevationGain": 123.4,
+    "startTimeLocal": "2026-09-03T07:15:00.0"
+  },
+  {
+    "activityId": 12346,
+    "activityName": "Synthetic strength session",
+    "activityType": "strength_training",
+    "durationInSeconds": 2400,
+    "startTimeLocal": "2026-08-25T18:00:00.0"
+  },
+  {
+    "activityId": 12347,
+    "activityName": "Outside requested range",
+    "activityType": "walking",
+    "durationInSeconds": 1200,
+    "startTimeLocal": "2026-08-20T12:00:00.0"
+  }
+]
+
