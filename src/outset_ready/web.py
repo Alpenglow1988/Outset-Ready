@@ -15,8 +15,10 @@ from outset_ready.storage import (
     add_manual_evidence,
     connect,
     count_evidence_days,
+    fetch_latest_connector_sync,
     init_db,
     list_goals,
+    list_recent_activities,
     list_recent_evidence,
 )
 
@@ -36,7 +38,7 @@ OPTIONAL_OPTIONS = (
 )
 
 
-def create_app(db_path: Path | None = None) -> FastAPI:
+def create_app(db_path: Path | None = None, *, preview_mode: bool = False) -> FastAPI:
     resolved_db_path = db_path or Path(
         os.getenv("OUTSET_READY_DB_PATH", "data/outset_ready.sqlite")
     )
@@ -44,6 +46,7 @@ def create_app(db_path: Path | None = None) -> FastAPI:
 
     app = FastAPI(title="Outset Ready", version="0.1.0")
     app.state.db_path = resolved_db_path
+    app.state.preview_mode = preview_mode
     app.mount("/static", StaticFiles(directory=PACKAGE_DIR / "static"), name="static")
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
 
@@ -53,6 +56,8 @@ def create_app(db_path: Path | None = None) -> FastAPI:
             goals = list_goals(conn)
             evidence = list_recent_evidence(conn)
             evidence_days = count_evidence_days(conn)
+            activities = list_recent_activities(conn, limit=5)
+            garmin_sync = fetch_latest_connector_sync(conn, "garmin")
 
         assessment = assess_readiness(ReadinessSignals(evidence_days=evidence_days))
         visible_evidence = [
@@ -70,9 +75,12 @@ def create_app(db_path: Path | None = None) -> FastAPI:
                 "evidence": visible_evidence,
                 "optional_evidence": optional_evidence,
                 "evidence_days": evidence_days,
+                "activities": activities,
+                "garmin_sync": garmin_sync,
                 "today": date.today().isoformat(),
                 "evidence_options": EVIDENCE_OPTIONS,
                 "optional_options": OPTIONAL_OPTIONS,
+                "preview_mode": app.state.preview_mode,
             },
         )
 
