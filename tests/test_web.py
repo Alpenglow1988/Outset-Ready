@@ -44,3 +44,16 @@ def test_manual_evidence_is_persisted_and_rendered(tmp_path):
 def test_health_endpoint(tmp_path):
     client = TestClient(create_app(tmp_path / "ready.sqlite"))
     assert client.get("/health").json() == {"status": "ok"}
+
+
+def test_hosted_preview_explains_temporary_storage(tmp_path):
+    client = TestClient(
+        create_app(tmp_path / "preview.sqlite", preview_mode=True)
+    )
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "Preview mode" in response.text
+    assert "entries may reset" in response.text
+    assert "Garmin data stay local" in response.text
