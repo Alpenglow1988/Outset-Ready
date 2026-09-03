@@ -27,6 +27,10 @@ The first slice proves the product shape end to end:
 | Connectors | Garmin adapter, then manual fallback | Calendar, COROS and other evidence sources |
 | Interpretation | Rules first | One cached AI interpretation after weekly confirmation |
 
+## Outset family resemblance
+
+Ready inherits the Outset-App design tokens, Avenir/Iowan font stacks, real brand mark, square editorial surfaces, uppercase utility labels and black primary controls. Ready keeps a left-hand workspace rail because users return to it as an ongoing dashboard rather than moving through Outset’s public planning journey.
+
 ## WL reuse decision
 
 The attached WL source passes 136 tests under Python 3.12. Reuse should happen by moving tested behaviour behind Ready-owned interfaces, not by importing the old repository at runtime.
@@ -57,4 +61,3 @@ Missing optional context must never force `Building a picture`. That state shoul
 ## Immediate follow-on
 
 The next slice should port the tested Garmin acquisition and normalisation code into a `connectors/garmin` package, map WL metrics into neutral evidence records, and add fixture-based contract tests before any real account is connected.
-
