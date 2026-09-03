@@ -2,7 +2,7 @@
 
 ## Decision
 
-Build V1 as a Python modular monolith with FastAPI, server-rendered Jinja templates and SQLite.
+Build V1 as a Python modular monolith with FastAPI and server-rendered Jinja templates. Use SQLite locally and managed Postgres for durable production state.
 
 This keeps the proven WL language, data store and test approach. It also gives Ready HTTP boundaries that the wider Outset ecosystem can call later without splitting V1 into separately deployed frontend and backend services.
 
@@ -29,16 +29,25 @@ The second slice moves the proven WL integration behind Ready-owned boundaries:
 
 The web application never receives Garmin credentials. The local CLI reads them from `.env` and passes them to the connector.
 
-## Deployment boundary
+## Private owner and deployment boundary
 
-`app.py` exports the FastAPI application for Vercel discovery. A Vercel build
-uses `/tmp/outset_ready.sqlite` and presents itself as a preview because that
-filesystem does not provide the durable application state Ready needs. It must
-not receive Garmin credentials, token files or personal raw payloads.
+`app.py` exports the FastAPI application for Vercel discovery. Production fails
+closed unless it receives a Postgres URL, one configured owner email, a scrypt
+password hash and a session-signing secret. Plaintext owner passwords never
+enter source control or application storage.
 
-The local runtime remains the V1 source of truth. A future hosted release should
-replace the SQLite repository with managed persistence behind the same storage
-boundary before authentication or personal sync moves into the Outset ecosystem.
+Signed, HTTP-only cookies authenticate the owner. State-changing forms require a
+session-bound CSRF token. Queries for goals, evidence, daily observations,
+activities and connector history all require the authenticated user ID. V1 has
+one owner, but the persistence boundary does not assume globally shared records.
+
+Postgres and SQLite use the same schema and storage functions. Existing local
+single-owner SQLite tables are migrated in place by adding the owner scope. The
+Vercel filesystem is never treated as authoritative storage.
+
+Vercel ignores non-main Git branches through `vercel.json`. A review branch is
+validated locally and in GitHub Actions; merging an accepted PR is the only
+action intended to create a production deployment.
 
 ## Runtime boundaries
 
@@ -46,7 +55,7 @@ boundary before authentication or personal sync moves into the Outset ecosystem.
 | --- | --- | --- |
 | Web | Dashboard, manual evidence, weekly review | Mobile companion and Outset account shell |
 | Domain | Goals, evidence, readiness rules | Event templates and cross-goal advice |
-| Storage | Local SQLite; temporary SQLite for hosted previews | Managed database behind the same repository interface |
+| Storage | Local SQLite and managed Postgres in production | Managed migrations and retention controls |
 | Connectors | Garmin adapter, then manual fallback | Calendar, COROS and other evidence sources |
 | Interpretation | Rules first | One cached AI interpretation after weekly confirmation |
 
@@ -83,4 +92,6 @@ Missing optional context must never force `Building a picture`. That state shoul
 
 ## Immediate follow-on
 
-The next slice should ingest planned workouts from the Garmin calendar, preserve plan snapshots when Garmin or Runna changes the schedule, and compare planned activity with completed activity in the Week in Progress view.
+The next slice should connect Garmin from the authenticated browser, support MFA,
+discard the Garmin password after connection and encrypt reusable token material
+in durable storage. WL insight parity follows that hosted connection.

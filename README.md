@@ -8,7 +8,7 @@ Ready starts with the user’s goal, gathers evidence from Garmin or manual entr
 
 ## Current status
 
-The first two application slices are now in place:
+The first three application slices are now in place, with the private owner foundation under review:
 
 - A desktop-first, responsive dashboard.
 - The reference goal stack persisted in SQLite.
@@ -19,21 +19,34 @@ The first two application slices are now in place:
 - Paginated daily health and activity syncing into connector-neutral tables.
 - Local raw payload storage for debugging and safe reprocessing.
 - Sync status and recent Garmin activity visibility in the dashboard.
+- One-owner sign-in with signed, HTTP-only sessions and CSRF-protected forms.
+- User-scoped goals, evidence, activities and connector history.
+- SQLite for local development and managed Postgres for durable production data.
+- A private Connections screen and separate application/database health checks.
 
-Garmin calendar plan ingestion and weekly plan comparison are the next build slices.
+Hosted Garmin connection is the next parity slice. Weekly insight parity with WL follows it.
 
 ## Run locally
 
-Requires Python 3.11 or newer.
+Requires Python 3.12 or newer.
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
-uvicorn outset_ready.web:create_app --factory --reload
+outset-ready hash-password
 ```
 
-Open <http://127.0.0.1:8000>.
+Store the printed hash and two other private settings in your shell or local secret manager:
+
+```bash
+export OUTSET_READY_OWNER_EMAIL='your-email@example.com'
+export OUTSET_READY_OWNER_PASSWORD_HASH='scrypt$...'
+export OUTSET_READY_SESSION_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+python -m uvicorn outset_ready.web:create_app --factory --reload
+```
+
+Open <http://127.0.0.1:8000> and sign in. Do not commit any of these values.
 
 The local database defaults to `data/outset_ready.sqlite`. Override it when needed:
 
@@ -47,19 +60,25 @@ Run tests:
 python -m pytest -q
 ```
 
-## Vercel preview
+## Vercel production
 
-Vercel uses the exported FastAPI application in `app.py`. The hosted build is a
-product preview and stores its SQLite file under `/tmp`, so entries can reset
-between serverless instances or deployments. Keep personal evidence, Garmin
-credentials, raw payloads and reusable tokens in the local runtime.
+Vercel uses the exported FastAPI application in `app.py`. Production deliberately
+refuses to start with temporary SQLite storage. Before merging this build:
 
-Durable hosted accounts will require a managed database adapter in a later
-Outset ecosystem phase. The preview banner makes the current boundary visible.
+1. Add a managed Postgres integration to the Vercel project.
+2. Set `OUTSET_READY_DATABASE_URL` to the provider's Postgres connection value.
+3. Add `OUTSET_READY_OWNER_EMAIL`, `OUTSET_READY_OWNER_PASSWORD_HASH` and
+   `OUTSET_READY_SESSION_SECRET` to the Production environment only.
+4. Confirm the values are not exposed to Preview or Development unless intended.
+
+`vercel.json` tells Vercel to ignore every branch except `main`. Build and test
+review branches locally and in GitHub Actions, then allow one production deploy
+when the reviewed PR is merged.
 
 ## Connect Garmin locally
 
-Copy the local environment template and add your Garmin login:
+The current local connector can still read Garmin credentials from a private
+local environment file:
 
 ```bash
 cp .env.example .env
@@ -78,6 +97,10 @@ python -m outset_ready.cli sync-garmin --days 7
 ```
 
 Ready stores the SQLite database and raw Garmin payloads under `data/`. Git ignores that directory. Do not commit `.env`, the database, raw payloads or Garmin tokens.
+
+Build #5 will replace this local credential step with an authenticated browser
+connection. It will discard the Garmin password after login and store encrypted
+reusable token material in the durable database.
 
 ## Product principles
 

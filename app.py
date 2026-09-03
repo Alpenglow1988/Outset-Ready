@@ -1,8 +1,4 @@
-"""Vercel-compatible FastAPI entrypoint.
-
-The hosted build is a product preview. Personal SQLite and Garmin data remain in
-the local Ready runtime until a managed persistence adapter is introduced.
-"""
+"""Vercel-compatible FastAPI entrypoint."""
 
 from __future__ import annotations
 
@@ -15,11 +11,8 @@ SRC_DIR = PROJECT_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from outset_ready.deployment import deployment_db_path, is_vercel_deployment
+from outset_ready.settings import load_app_settings
 from outset_ready.web import create_app
 
 
-app = create_app(
-    deployment_db_path(),
-    preview_mode=is_vercel_deployment(),
-)
+app = create_app(settings=load_app_settings())

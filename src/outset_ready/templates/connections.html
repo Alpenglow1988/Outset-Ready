@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Connections · Outset Ready</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="Outset Ready home">
+          <img class="brand-mark" src="{{ url_for('static', path='/outset-mark.svg') }}" alt="">
+          <span>Outset <strong>Ready</strong></span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a class="nav-link" href="/">Overview</a>
+          <span class="nav-link disabled">Week in progress</span>
+          <span class="nav-link disabled">Goals</span>
+          <span class="nav-link disabled">Events</span>
+          <a class="nav-link active" href="/connections">Connections</a>
+        </nav>
+        <div class="sidebar-footer">
+          <p class="sidebar-note">{{ owner_email }}<br>{% if persistent_storage %}Persistent private data{% else %}Local development data{% endif %}</p>
+          <form class="logout-form" method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="nav-link logout-button" type="submit">Sign out</button>
+          </form>
+        </div>
+      </aside>
+      <main>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Evidence sources</p>
+            <h1>Connections</h1>
+            <p class="lede">See what supplies your Ready picture and whether it is current.</p>
+          </div>
+        </header>
+        <section class="connection-list">
+          <article class="connection-card">
+            <div>
+              <p class="eyebrow">Activity and recovery</p>
+              <h2>Garmin</h2>
+              {% if garmin_sync %}
+                <p>Last sync: {{ garmin_sync.status.value | replace('_', ' ') }} through {{ garmin_sync.end_date.strftime('%d %b %Y') }}.</p>
+              {% else %}
+                <p>Not connected to this Ready workspace yet.</p>
+              {% endif %}
+            </div>
+            <div class="connection-action">
+              <span class="status">{% if garmin_sync %}{{ garmin_sync.status.value | replace('_', ' ') }}{% else %}Not connected{% endif %}</span>
+              <p>Browser connection and MFA arrive in Build #5. Until then, the local sync command remains available.</p>
+            </div>
+          </article>
+          <article class="connection-card">
+            <div>
+              <p class="eyebrow">Fallback</p>
+              <h2>Manual evidence</h2>
+              <p>Available now for measurements, activity time, sleep and optional context.</p>
+            </div>
+            <div class="connection-action">
+              <span class="status">Available</span>
+              <a class="primary-button button-link" href="/">Add evidence</a>
+            </div>
+          </article>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

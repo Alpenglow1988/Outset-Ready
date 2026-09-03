@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from datetime import UTC, date, datetime
 from pathlib import Path
+from typing import Any, TypeAlias
 from uuid import uuid4
 
 from outset_ready.domain import (
@@ -21,6 +24,9 @@ from outset_ready.domain import (
     validate_evidence,
 )
 
+
+DatabaseTarget: TypeAlias = str | Path
+DEFAULT_OWNER_ID = "owner"
 
 REFERENCE_GOALS = (
     Goal(
@@ -57,8 +63,142 @@ REFERENCE_GOALS = (
     ),
 )
 
+SCHEMA_STATEMENTS = (
+    """
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS goals (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL CHECK (category IN ('health', 'fitness', 'adventure')),
+      priority TEXT NOT NULL CHECK (priority IN ('current', 'supporting', 'future')),
+      sort_order INTEGER NOT NULL,
+      target_value REAL,
+      target_unit TEXT,
+      target_date TEXT,
+      supports_goal_id TEXT,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, id),
+      FOREIGN KEY (user_id, supports_goal_id) REFERENCES goals(user_id, id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS evidence_records (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      id TEXT PRIMARY KEY,
+      recorded_on TEXT NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('garmin', 'manual')),
+      kind TEXT NOT NULL,
+      value REAL,
+      unit TEXT,
+      note TEXT,
+      created_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS daily_observations (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      recorded_on TEXT NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('garmin', 'manual')),
+      weight_kg REAL,
+      body_fat_percent REAL,
+      fat_mass_kg REAL,
+      lean_mass_kg REAL,
+      steps INTEGER,
+      resting_hr REAL,
+      sleep_hours REAL,
+      sleep_score REAL,
+      stress_score REAL,
+      hrv_value REAL,
+      hrv_status TEXT,
+      body_battery_avg REAL,
+      active_calories REAL,
+      total_calories REAL,
+      source_ref TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, recorded_on, source)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS activities (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      source TEXT NOT NULL CHECK (source IN ('garmin', 'manual')),
+      external_id TEXT NOT NULL,
+      recorded_on TEXT NOT NULL,
+      activity_type TEXT NOT NULL,
+      name TEXT,
+      duration_seconds REAL,
+      distance_meters REAL,
+      elevation_gain_meters REAL,
+      average_hr REAL,
+      calories REAL,
+      source_ref TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, source, external_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS connector_syncs (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      id TEXT PRIMARY KEY,
+      connector TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      daily_records INTEGER NOT NULL DEFAULT 0,
+      activity_records INTEGER NOT NULL DEFAULT 0,
+      warnings INTEGER NOT NULL DEFAULT 0,
+      error_message TEXT
+    )
+    """,
+)
 
-def connect(db_path: Path) -> sqlite3.Connection:
+INDEX_STATEMENTS = (
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS daily_observations_user_source_idx
+      ON daily_observations(user_id, recorded_on, source)
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS activities_user_source_idx
+      ON activities(user_id, source, external_id)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS evidence_user_recorded_on_idx
+      ON evidence_records(user_id, recorded_on DESC, created_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS activities_user_recorded_on_idx
+      ON activities(user_id, recorded_on DESC, updated_at DESC)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS connector_syncs_user_started_at_idx
+      ON connector_syncs(user_id, connector, started_at DESC)
+    """,
+)
+
+
+def is_postgres_target(target: DatabaseTarget) -> bool:
+    return isinstance(target, str) and target.startswith(("postgres://", "postgresql://"))
+
+
+def connect(target: DatabaseTarget):
+    if is_postgres_target(target):
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError("Postgres support requires psycopg.") from exc
+        return psycopg.connect(str(target), row_factory=dict_row)
+
+    db_path = Path(target).expanduser()
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -66,130 +206,75 @@ def connect(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def init_db(db_path: Path) -> None:
-    with connect(db_path) as conn:
-        conn.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS goals (
-              id TEXT PRIMARY KEY,
-              title TEXT NOT NULL,
-              category TEXT NOT NULL CHECK (category IN ('health', 'fitness', 'adventure')),
-              priority TEXT NOT NULL CHECK (priority IN ('current', 'supporting', 'future')),
-              sort_order INTEGER NOT NULL,
-              target_value REAL,
-              target_unit TEXT,
-              target_date TEXT,
-              supports_goal_id TEXT REFERENCES goals(id),
-              created_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS evidence_records (
-              id TEXT PRIMARY KEY,
-              recorded_on TEXT NOT NULL,
-              source TEXT NOT NULL CHECK (source IN ('garmin', 'manual')),
-              kind TEXT NOT NULL,
-              value REAL,
-              unit TEXT,
-              note TEXT,
-              created_at TEXT NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS evidence_recorded_on_idx
-              ON evidence_records(recorded_on DESC, created_at DESC);
-
-            CREATE TABLE IF NOT EXISTS daily_observations (
-              recorded_on TEXT NOT NULL,
-              source TEXT NOT NULL CHECK (source IN ('garmin', 'manual')),
-              weight_kg REAL,
-              body_fat_percent REAL,
-              fat_mass_kg REAL,
-              lean_mass_kg REAL,
-              steps INTEGER,
-              resting_hr REAL,
-              sleep_hours REAL,
-              sleep_score REAL,
-              stress_score REAL,
-              hrv_value REAL,
-              hrv_status TEXT,
-              body_battery_avg REAL,
-              active_calories REAL,
-              total_calories REAL,
-              source_ref TEXT,
-              updated_at TEXT NOT NULL,
-              PRIMARY KEY (recorded_on, source)
-            );
-
-            CREATE TABLE IF NOT EXISTS activities (
-              source TEXT NOT NULL CHECK (source IN ('garmin', 'manual')),
-              external_id TEXT NOT NULL,
-              recorded_on TEXT NOT NULL,
-              activity_type TEXT NOT NULL,
-              name TEXT,
-              duration_seconds REAL,
-              distance_meters REAL,
-              elevation_gain_meters REAL,
-              average_hr REAL,
-              calories REAL,
-              source_ref TEXT,
-              updated_at TEXT NOT NULL,
-              PRIMARY KEY (source, external_id)
-            );
-
-            CREATE INDEX IF NOT EXISTS activities_recorded_on_idx
-              ON activities(recorded_on DESC, updated_at DESC);
-
-            CREATE TABLE IF NOT EXISTS connector_syncs (
-              id TEXT PRIMARY KEY,
-              connector TEXT NOT NULL,
-              status TEXT NOT NULL,
-              started_at TEXT NOT NULL,
-              finished_at TEXT,
-              start_date TEXT NOT NULL,
-              end_date TEXT NOT NULL,
-              daily_records INTEGER NOT NULL DEFAULT 0,
-              activity_records INTEGER NOT NULL DEFAULT 0,
-              warnings INTEGER NOT NULL DEFAULT 0,
-              error_message TEXT
-            );
-            """
-        )
-        seed_reference_goals(conn)
+def init_db(
+    target: DatabaseTarget,
+    *,
+    owner_email: str = "owner@local",
+    user_id: str = DEFAULT_OWNER_ID,
+) -> None:
+    with connect(target) as conn:
+        with _transaction(conn):
+            for statement in SCHEMA_STATEMENTS:
+                _execute(conn, statement)
+            if isinstance(conn, sqlite3.Connection):
+                _migrate_legacy_sqlite_tables(conn)
+            for statement in INDEX_STATEMENTS:
+                _execute(conn, statement)
+            ensure_owner(conn, user_id=user_id, email=owner_email)
+            seed_reference_goals(conn, user_id=user_id)
 
 
-def seed_reference_goals(conn: sqlite3.Connection) -> None:
+def ensure_owner(conn, *, user_id: str, email: str) -> None:
+    _execute(
+        conn,
+        """
+        INSERT INTO users (id, email, created_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET email = excluded.email
+        """,
+        (user_id, email, _utc_now()),
+    )
+
+
+def seed_reference_goals(conn, *, user_id: str = DEFAULT_OWNER_ID) -> None:
     now = _utc_now()
-    with conn:
-        for goal in REFERENCE_GOALS:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO goals (
-                  id, title, category, priority, sort_order, target_value,
-                  target_unit, target_date, supports_goal_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    goal.id,
-                    goal.title,
-                    goal.category.value,
-                    goal.priority.value,
-                    goal.sort_order,
-                    goal.target_value,
-                    goal.target_unit,
-                    goal.target_date.isoformat() if goal.target_date else None,
-                    goal.supports_goal_id,
-                    now,
-                ),
-            )
+    for goal in REFERENCE_GOALS:
+        _execute(
+            conn,
+            """
+            INSERT INTO goals (
+              user_id, id, title, category, priority, sort_order, target_value,
+              target_unit, target_date, supports_goal_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING
+            """,
+            (
+                user_id,
+                goal.id,
+                goal.title,
+                goal.category.value,
+                goal.priority.value,
+                goal.sort_order,
+                goal.target_value,
+                goal.target_unit,
+                goal.target_date.isoformat() if goal.target_date else None,
+                goal.supports_goal_id,
+                now,
+            ),
+        )
 
 
-def list_goals(conn: sqlite3.Connection) -> list[Goal]:
-    rows = conn.execute(
+def list_goals(conn, *, user_id: str = DEFAULT_OWNER_ID) -> list[Goal]:
+    rows = _execute(
+        conn,
         """
         SELECT id, title, category, priority, sort_order, target_value,
                target_unit, target_date, supports_goal_id
         FROM goals
+        WHERE user_id = ?
         ORDER BY sort_order, created_at
-        """
+        """,
+        (user_id,),
     ).fetchall()
     return [
         Goal(
@@ -208,13 +293,14 @@ def list_goals(conn: sqlite3.Connection) -> list[Goal]:
 
 
 def add_manual_evidence(
-    conn: sqlite3.Connection,
+    conn,
     *,
     recorded_on: date,
     kind: EvidenceKind,
     value: float | None = None,
     unit: str | None = None,
     note: str | None = None,
+    user_id: str = DEFAULT_OWNER_ID,
 ) -> EvidenceRecord:
     record = EvidenceRecord(
         id=str(uuid4()),
@@ -226,14 +312,16 @@ def add_manual_evidence(
         note=note.strip() if note and note.strip() else None,
     )
     validate_evidence(record)
-    with conn:
-        conn.execute(
+    with _transaction(conn):
+        _execute(
+            conn,
             """
             INSERT INTO evidence_records (
-              id, recorded_on, source, kind, value, unit, note, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              user_id, id, recorded_on, source, kind, value, unit, note, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                user_id,
                 record.id,
                 record.recorded_on.isoformat(),
                 record.source.value,
@@ -248,17 +336,21 @@ def add_manual_evidence(
 
 
 def list_recent_evidence(
-    conn: sqlite3.Connection,
+    conn,
     limit: int = 12,
+    *,
+    user_id: str = DEFAULT_OWNER_ID,
 ) -> list[EvidenceRecord]:
-    rows = conn.execute(
+    rows = _execute(
+        conn,
         """
         SELECT id, recorded_on, source, kind, value, unit, note
         FROM evidence_records
+        WHERE user_id = ?
         ORDER BY recorded_on DESC, created_at DESC
         LIMIT ?
         """,
-        (limit,),
+        (user_id, limit),
     ).fetchall()
     return [
         EvidenceRecord(
@@ -274,46 +366,53 @@ def list_recent_evidence(
     ]
 
 
-def count_evidence_days(conn: sqlite3.Connection) -> int:
-    row = conn.execute(
+def count_evidence_days(conn, *, user_id: str = DEFAULT_OWNER_ID) -> int:
+    row = _execute(
+        conn,
         """
         SELECT COUNT(DISTINCT recorded_on) AS count
         FROM (
           SELECT recorded_on
           FROM evidence_records
-          WHERE kind NOT IN ('alcohol_units', 'calories', 'protein_g', 'note')
+          WHERE user_id = ?
+            AND kind NOT IN ('alcohol_units', 'calories', 'protein_g', 'note')
           UNION
           SELECT recorded_on
           FROM daily_observations
-          WHERE weight_kg IS NOT NULL
+          WHERE user_id = ?
+            AND (weight_kg IS NOT NULL
              OR body_fat_percent IS NOT NULL
              OR steps IS NOT NULL
              OR resting_hr IS NOT NULL
              OR sleep_hours IS NOT NULL
              OR stress_score IS NOT NULL
-             OR hrv_value IS NOT NULL
+             OR hrv_value IS NOT NULL)
           UNION
-          SELECT recorded_on FROM activities
-        )
-        """
+          SELECT recorded_on FROM activities WHERE user_id = ?
+        ) AS evidence_dates
+        """,
+        (user_id, user_id, user_id),
     ).fetchone()
     return int(row["count"])
 
 
 def upsert_daily_observation(
-    conn: sqlite3.Connection,
+    conn,
     observation: DailyObservation,
+    *,
+    user_id: str = DEFAULT_OWNER_ID,
 ) -> None:
-    with conn:
-        conn.execute(
+    with _transaction(conn):
+        _execute(
+            conn,
             """
             INSERT INTO daily_observations (
-              recorded_on, source, weight_kg, body_fat_percent, fat_mass_kg,
-              lean_mass_kg, steps, resting_hr, sleep_hours, sleep_score,
-              stress_score, hrv_value, hrv_status, body_battery_avg,
+              user_id, recorded_on, source, weight_kg, body_fat_percent,
+              fat_mass_kg, lean_mass_kg, steps, resting_hr, sleep_hours,
+              sleep_score, stress_score, hrv_value, hrv_status, body_battery_avg,
               active_calories, total_calories, source_ref, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(recorded_on, source) DO UPDATE SET
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, recorded_on, source) DO UPDATE SET
               weight_kg = excluded.weight_kg,
               body_fat_percent = excluded.body_fat_percent,
               fat_mass_kg = excluded.fat_mass_kg,
@@ -332,6 +431,7 @@ def upsert_daily_observation(
               updated_at = excluded.updated_at
             """,
             (
+                user_id,
                 observation.recorded_on.isoformat(),
                 observation.source.value,
                 observation.weight_kg,
@@ -354,16 +454,22 @@ def upsert_daily_observation(
         )
 
 
-def upsert_activity(conn: sqlite3.Connection, activity: ActivityRecord) -> None:
-    with conn:
-        conn.execute(
+def upsert_activity(
+    conn,
+    activity: ActivityRecord,
+    *,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> None:
+    with _transaction(conn):
+        _execute(
+            conn,
             """
             INSERT INTO activities (
-              source, external_id, recorded_on, activity_type, name,
+              user_id, source, external_id, recorded_on, activity_type, name,
               duration_seconds, distance_meters, elevation_gain_meters,
               average_hr, calories, source_ref, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(source, external_id) DO UPDATE SET
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, source, external_id) DO UPDATE SET
               recorded_on = excluded.recorded_on,
               activity_type = excluded.activity_type,
               name = excluded.name,
@@ -376,6 +482,7 @@ def upsert_activity(conn: sqlite3.Connection, activity: ActivityRecord) -> None:
               updated_at = excluded.updated_at
             """,
             (
+                user_id,
                 activity.source.value,
                 activity.external_id,
                 activity.recorded_on.isoformat(),
@@ -393,19 +500,23 @@ def upsert_activity(conn: sqlite3.Connection, activity: ActivityRecord) -> None:
 
 
 def list_recent_activities(
-    conn: sqlite3.Connection,
+    conn,
     limit: int = 20,
+    *,
+    user_id: str = DEFAULT_OWNER_ID,
 ) -> list[ActivityRecord]:
-    rows = conn.execute(
+    rows = _execute(
+        conn,
         """
         SELECT source, external_id, recorded_on, activity_type, name,
                duration_seconds, distance_meters, elevation_gain_meters,
                average_hr, calories, source_ref
         FROM activities
+        WHERE user_id = ?
         ORDER BY recorded_on DESC, updated_at DESC
         LIMIT ?
         """,
-        (limit,),
+        (user_id, limit),
     ).fetchall()
     return [
         ActivityRecord(
@@ -426,21 +537,24 @@ def list_recent_activities(
 
 
 def start_connector_sync(
-    conn: sqlite3.Connection,
+    conn,
     *,
     connector: str,
     start_date: date,
     end_date: date,
+    user_id: str = DEFAULT_OWNER_ID,
 ) -> str:
     sync_id = str(uuid4())
-    with conn:
-        conn.execute(
+    with _transaction(conn):
+        _execute(
+            conn,
             """
             INSERT INTO connector_syncs (
-              id, connector, status, started_at, start_date, end_date
-            ) VALUES (?, ?, ?, ?, ?, ?)
+              user_id, id, connector, status, started_at, start_date, end_date
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
+                user_id,
                 sync_id,
                 connector,
                 ConnectorSyncStatus.RUNNING.value,
@@ -453,7 +567,7 @@ def start_connector_sync(
 
 
 def finish_connector_sync(
-    conn: sqlite3.Connection,
+    conn,
     sync_id: str,
     *,
     status: ConnectorSyncStatus,
@@ -461,16 +575,18 @@ def finish_connector_sync(
     activity_records: int,
     warnings: int,
     error_message: str | None = None,
+    user_id: str = DEFAULT_OWNER_ID,
 ) -> None:
     if status is ConnectorSyncStatus.RUNNING:
         raise ValueError("A finished connector sync cannot remain running.")
-    with conn:
-        conn.execute(
+    with _transaction(conn):
+        _execute(
+            conn,
             """
             UPDATE connector_syncs
             SET status = ?, finished_at = ?, daily_records = ?,
                 activity_records = ?, warnings = ?, error_message = ?
-            WHERE id = ?
+            WHERE user_id = ? AND id = ?
             """,
             (
                 status.value,
@@ -479,26 +595,30 @@ def finish_connector_sync(
                 activity_records,
                 warnings,
                 error_message,
+                user_id,
                 sync_id,
             ),
         )
 
 
 def fetch_latest_connector_sync(
-    conn: sqlite3.Connection,
+    conn,
     connector: str,
+    *,
+    user_id: str = DEFAULT_OWNER_ID,
 ) -> ConnectorSync | None:
-    row = conn.execute(
+    row = _execute(
+        conn,
         """
         SELECT id, connector, status, started_at, finished_at, start_date,
                end_date, daily_records, activity_records, warnings,
                error_message
         FROM connector_syncs
-        WHERE connector = ?
+        WHERE user_id = ? AND connector = ?
         ORDER BY started_at DESC
         LIMIT 1
         """,
-        (connector,),
+        (user_id, connector),
     ).fetchone()
     if row is None:
         return None
@@ -515,6 +635,48 @@ def fetch_latest_connector_sync(
         warnings=row["warnings"],
         error_message=row["error_message"],
     )
+
+
+def database_is_ready(target: DatabaseTarget) -> bool:
+    try:
+        with connect(target) as conn:
+            _execute(conn, "SELECT 1").fetchone()
+    except Exception:
+        return False
+    return True
+
+
+def _execute(conn, statement: str, parameters: Sequence[Any] = ()):
+    if isinstance(conn, sqlite3.Connection):
+        return conn.execute(statement, tuple(parameters))
+    return conn.execute(statement.replace("?", "%s"), tuple(parameters))
+
+
+@contextmanager
+def _transaction(conn) -> Iterator[None]:
+    if isinstance(conn, sqlite3.Connection):
+        with conn:
+            yield
+        return
+    with conn.transaction():
+        yield
+
+
+def _migrate_legacy_sqlite_tables(conn: sqlite3.Connection) -> None:
+    for table in (
+        "goals",
+        "evidence_records",
+        "daily_observations",
+        "activities",
+        "connector_syncs",
+    ):
+        columns = {
+            row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if "user_id" not in columns:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT 'owner'"
+            )
 
 
 def _utc_now() -> str:
