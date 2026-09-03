@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 
 
@@ -31,6 +31,23 @@ class EvidenceKind(StrEnum):
     CALORIES = "calories"
     PROTEIN_G = "protein_g"
     NOTE = "note"
+
+
+class ActivityType(StrEnum):
+    RUN = "run"
+    WALK = "walk"
+    HIKE = "hike"
+    SWIM = "swim"
+    STRENGTH = "strength"
+    MOBILITY_OR_YOGA = "mobility_or_yoga"
+    OTHER = "other"
+
+
+class ConnectorSyncStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    COMPLETED_WITH_WARNINGS = "completed_with_warnings"
+    FAILED = "failed"
 
 
 OPTIONAL_CONTEXT_KINDS = frozenset(
@@ -77,6 +94,57 @@ class EvidenceRecord:
     note: str | None = None
 
 
+@dataclass(frozen=True)
+class DailyObservation:
+    recorded_on: date
+    source: EvidenceSource
+    weight_kg: float | None = None
+    body_fat_percent: float | None = None
+    fat_mass_kg: float | None = None
+    lean_mass_kg: float | None = None
+    steps: int | None = None
+    resting_hr: float | None = None
+    sleep_hours: float | None = None
+    sleep_score: float | None = None
+    stress_score: float | None = None
+    hrv_value: float | None = None
+    hrv_status: str | None = None
+    body_battery_avg: float | None = None
+    active_calories: float | None = None
+    total_calories: float | None = None
+    source_ref: str | None = None
+
+
+@dataclass(frozen=True)
+class ActivityRecord:
+    source: EvidenceSource
+    external_id: str
+    recorded_on: date
+    activity_type: ActivityType
+    name: str | None = None
+    duration_seconds: float | None = None
+    distance_meters: float | None = None
+    elevation_gain_meters: float | None = None
+    average_hr: float | None = None
+    calories: float | None = None
+    source_ref: str | None = None
+
+
+@dataclass(frozen=True)
+class ConnectorSync:
+    id: str
+    connector: str
+    status: ConnectorSyncStatus
+    started_at: datetime
+    finished_at: datetime | None
+    start_date: date
+    end_date: date
+    daily_records: int
+    activity_records: int
+    warnings: int
+    error_message: str | None = None
+
+
 def validate_evidence(record: EvidenceRecord) -> None:
     if record.kind is EvidenceKind.NOTE:
         if not record.note or not record.note.strip():
@@ -85,4 +153,3 @@ def validate_evidence(record: EvidenceRecord) -> None:
 
     if record.value is None:
         raise ValueError("This evidence type needs a value.")
-
