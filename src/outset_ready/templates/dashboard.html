@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Outset Ready</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="Outset Ready home">
+          <img class="brand-mark" src="{{ url_for('static', path='/outset-mark.svg') }}" alt="">
+          <span>Outset <strong>Ready</strong></span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a class="nav-link active" href="/">Overview</a>
+          <span class="nav-link disabled">Week in progress</span>
+          <span class="nav-link disabled">Goals</span>
+          <span class="nav-link disabled">Events</span>
+        </nav>
+        <p class="sidebar-note">Personal V1<br>Local data only</p>
+      </aside>
+
+      <main>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Your current read</p>
+            <h1>A calm read on where you are</h1>
+            <p class="lede">Does what you are doing still fit where you want to go?</p>
+          </div>
+          <span class="status status-{{ assessment.state.value | lower | replace(' ', '-') }}">
+            {{ assessment.state.value }}
+          </span>
+        </header>
+
+        <section class="read-card">
+          <div>
+            <p class="eyebrow">What the evidence says</p>
+            <h2>{{ assessment.summary }}</h2>
+            <p>{{ assessment.next_step }}</p>
+          </div>
+          <div class="data-count">
+            <strong>{{ evidence_days }}</strong>
+            <span>evidence day{% if evidence_days != 1 %}s{% endif %}</span>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Goal stack</p>
+              <h2>What matters now, and what it supports</h2>
+            </div>
+            <button class="quiet-button" disabled>Edit goals soon</button>
+          </div>
+          <div class="goal-grid">
+            {% for goal in goals %}
+              <article class="goal-card goal-{{ goal.priority.value }}">
+                <div class="goal-meta">
+                  <span>{{ goal.priority.value }}</span>
+                  <span>{{ goal.category.value }}</span>
+                </div>
+                <h3>{{ goal.title }}</h3>
+                {% if goal.target_value %}
+                  <p class="goal-target">Target {{ goal.target_value | int }} {{ goal.target_unit }}</p>
+                {% elif goal.supports_goal_id %}
+                  <p class="goal-target">Supports your current priority</p>
+                {% else %}
+                  <p class="goal-target">Kept in view without crowding today</p>
+                {% endif %}
+              </article>
+            {% endfor %}
+          </div>
+        </section>
+
+        <div class="two-column">
+          <section class="panel">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">Evidence</p>
+                <h2>Recent entries</h2>
+              </div>
+            </div>
+            {% if evidence %}
+              <ol class="evidence-list">
+                {% for item in evidence %}
+                  <li>
+                    <span class="evidence-date">{{ item.recorded_on.strftime('%d %b') }}</span>
+                    <span class="evidence-kind">{{ item.kind.value | replace('_', ' ') }}</span>
+                    <strong>
+                      {% if item.value is not none %}{{ '%g' | format(item.value) }} {{ item.unit or '' }}{% else %}{{ item.note }}{% endif %}
+                    </strong>
+                  </li>
+                {% endfor %}
+              </ol>
+            {% else %}
+              <div class="empty-state">
+                <p>No evidence yet. Add only what is useful today.</p>
+              </div>
+            {% endif %}
+
+            {% if optional_evidence %}
+              <details class="optional-read">
+                <summary>Optional context added</summary>
+                <ol class="evidence-list">
+                  {% for item in optional_evidence %}
+                    <li>
+                      <span class="evidence-date">{{ item.recorded_on.strftime('%d %b') }}</span>
+                      <span class="evidence-kind">{{ item.kind.value | replace('_', ' ') }}</span>
+                      <strong>{{ '%g' | format(item.value) }} {{ item.unit or '' }}</strong>
+                    </li>
+                  {% endfor %}
+                </ol>
+              </details>
+            {% endif %}
+          </section>
+
+          <section class="panel add-panel">
+            <p class="eyebrow">Manual fallback</p>
+            <h2>Add useful evidence</h2>
+            <p>Garmin will do most of this later. Manual entry always remains available.</p>
+            <form method="post" action="/evidence">
+              <label>
+                Date
+                <input type="date" name="recorded_on" value="{{ today }}" required>
+              </label>
+              <label>
+                Evidence
+                <select name="kind" required>
+                  {% for value, label in evidence_options %}
+                    <option value="{{ value.value }}">{{ label }}</option>
+                  {% endfor %}
+                  <optgroup label="Optional context">
+                    {% for value, label in optional_options %}
+                      <option value="{{ value.value }}">{{ label }}</option>
+                    {% endfor %}
+                  </optgroup>
+                </select>
+              </label>
+              <label>
+                Value <span>Leave blank for a context note</span>
+                <input type="number" name="value" step="any" inputmode="decimal">
+              </label>
+              <label>
+                Note <span>Optional unless adding a context note</span>
+                <textarea name="note" rows="3"></textarea>
+              </label>
+              <details class="optional-inputs">
+                <summary>Calories, protein or alcohol</summary>
+                <p>These can enrich the read. Ready will never require them. Add one through the optional context group in the Evidence menu.</p>
+              </details>
+              <button class="primary-button" type="submit">Add evidence</button>
+            </form>
+          </section>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

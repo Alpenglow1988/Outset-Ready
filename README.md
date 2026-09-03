@@ -8,13 +8,40 @@ Ready starts with the user’s goal, gathers evidence from Garmin or manual entr
 
 ## Current status
 
-This repository contains the product definition for a personal V1. Implementation has not started here.
+The first application slice is now in place:
 
-The V1 reference journey uses a real goal stack:
+- A desktop-first, responsive dashboard.
+- The reference goal stack persisted in SQLite.
+- Manual evidence entry with calories, protein and alcohol kept optional.
+- The agreed neutral readiness vocabulary implemented as deterministic rules.
+- A small goals API and health endpoint for future integrations.
 
-- Current priority: reach 85 kg.
-- Supporting goal: maintain strength and training consistency.
-- Future priority: prepare for Ultra Mirage El Djerid 50 km.
+Garmin connection and weekly plan comparison are the next build slices.
+
+## Run locally
+
+Requires Python 3.11 or newer.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+uvicorn outset_ready.web:create_app --factory --reload
+```
+
+Open <http://127.0.0.1:8000>.
+
+The local database defaults to `data/outset_ready.sqlite`. Override it when needed:
+
+```bash
+OUTSET_READY_DB_PATH=/path/to/ready.sqlite uvicorn outset_ready.web:create_app --factory
+```
+
+Run tests:
+
+```bash
+python -m pytest -q
+```
 
 ## Product principles
 
@@ -29,7 +56,8 @@ The V1 reference journey uses a real goal stack:
 
 - [V1 product brief](docs/product/v1-product-brief.md)
 - [Decision log](docs/product/decision-log.md)
+- [V1 architecture](docs/engineering/architecture.md)
 
-## Implementation boundary
+## WL boundary
 
-We will inspect the existing WL dashboard before selecting the application stack or writing architecture documents. The new application should reuse proven Garmin importing, SQLite modelling, calculations and tests without creating a runtime dependency on the old repository.
+The attached WL implementation passes all 136 tests under Python 3.12. Ready will move its proven Garmin acquisition, defensive normalisation and metric behaviour behind Ready-owned interfaces. It will not depend on the WL repository at runtime, and no WL secrets, raw payloads, local database or generated reports will be copied.
