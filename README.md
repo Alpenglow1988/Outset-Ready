@@ -8,15 +8,19 @@ Ready starts with the user’s goal, gathers evidence from Garmin or manual entr
 
 ## Current status
 
-The first application slice is now in place:
+The first two application slices are now in place:
 
 - A desktop-first, responsive dashboard.
 - The reference goal stack persisted in SQLite.
 - Manual evidence entry with calories, protein and alcohol kept optional.
 - The agreed neutral readiness vocabulary implemented as deterministic rules.
 - A small goals API and health endpoint for future integrations.
+- Garmin login with reusable local tokens and MFA support.
+- Paginated daily health and activity syncing into connector-neutral tables.
+- Local raw payload storage for debugging and safe reprocessing.
+- Sync status and recent Garmin activity visibility in the dashboard.
 
-Garmin connection and weekly plan comparison are the next build slices.
+Garmin calendar plan ingestion and weekly plan comparison are the next build slices.
 
 ## Run locally
 
@@ -43,6 +47,38 @@ Run tests:
 python -m pytest -q
 ```
 
+## Vercel preview
+
+Vercel uses the exported FastAPI application in `app.py`. The hosted build is a
+product preview and stores its SQLite file under `/tmp`, so entries can reset
+between serverless instances or deployments. Keep personal evidence, Garmin
+credentials, raw payloads and reusable tokens in the local runtime.
+
+Durable hosted accounts will require a managed database adapter in a later
+Outset ecosystem phase. The preview banner makes the current boundary visible.
+
+## Connect Garmin locally
+
+Copy the local environment template and add your Garmin login:
+
+```bash
+cp .env.example .env
+```
+
+Set `GARMIN_EMAIL` and `GARMIN_PASSWORD` in `.env`, then start with a short sync:
+
+```bash
+python -m outset_ready.cli sync-garmin --days 3
+```
+
+Garmin may request an MFA code during the first login. Ready stores reusable Garmin tokens in `~/.garminconnect` by default. A normal weekly refresh uses:
+
+```bash
+python -m outset_ready.cli sync-garmin --days 7
+```
+
+Ready stores the SQLite database and raw Garmin payloads under `data/`. Git ignores that directory. Do not commit `.env`, the database, raw payloads or Garmin tokens.
+
 ## Product principles
 
 - The user chooses which goal matters most.
@@ -60,4 +96,4 @@ python -m pytest -q
 
 ## WL boundary
 
-The attached WL implementation passes all 136 tests under Python 3.12. Ready will move its proven Garmin acquisition, defensive normalisation and metric behaviour behind Ready-owned interfaces. It will not depend on the WL repository at runtime, and no WL secrets, raw payloads, local database or generated reports will be copied.
+The attached WL implementation passes all 136 tests under Python 3.12. Ready has moved its proven Garmin acquisition and defensive normalisation behaviour behind Ready-owned interfaces. It does not depend on the WL repository at runtime, and no WL secrets, raw payloads, local database or generated reports were copied.

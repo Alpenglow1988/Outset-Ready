@@ -76,6 +76,20 @@ nav { margin-top: 56px; display: grid; gap: 8px; }
 
 main { margin-left: 220px; padding: 56px clamp(28px, 5vw, 78px) 80px; max-width: 1400px; }
 
+.preview-banner {
+  display: flex;
+  gap: 18px;
+  align-items: baseline;
+  margin: -20px 0 34px;
+  padding: 12px 15px;
+  border: 1px solid var(--gold);
+  color: #6f421d;
+  background: #f7eadb;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.preview-banner strong { flex: 0 0 auto; text-transform: uppercase; letter-spacing: .1em; font-size: 10px; }
+
 .page-header, .section-heading, .read-card {
   display: flex;
   align-items: flex-start;
@@ -115,6 +129,23 @@ h3 { margin-bottom: 10px; font-size: 23px; }
 .data-count { min-width: 110px; text-align: right; }
 .data-count strong { display: block; font-family: "Iowan Old Style", "Palatino Linotype", serif; font-size: 46px; font-weight: 400; }
 .data-count span { color: var(--muted); font-size: 13px; }
+
+.source-strip {
+  display: grid;
+  grid-template-columns: minmax(190px, .7fr) repeat(2, minmax(0, 1fr));
+  margin: -26px 0 52px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+
+.source-heading, .source-item { padding: 18px 20px; }
+.source-strip > :not(:last-child) { border-right: 1px solid var(--line); }
+.source-heading h2 { margin-bottom: 0; font-size: 20px; }
+.source-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.source-meta strong, .source-meta span { text-transform: uppercase; letter-spacing: .1em; font-size: 10px; }
+.source-meta span { color: var(--muted); }
+.source-item p { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.source-item code { color: var(--ink); font-size: 11px; overflow-wrap: anywhere; }
 
 .section-heading { margin-bottom: 18px; align-items: end; }
 .section-heading.compact { align-items: center; }
@@ -167,7 +198,12 @@ textarea { resize: vertical; }
   .sidebar { position: static; width: auto; padding: 18px 20px; }
   .sidebar nav, .sidebar-note { display: none; }
   main { margin-left: 0; padding: 34px 20px 60px; }
+  .preview-banner { align-items: flex-start; flex-direction: column; gap: 3px; margin-top: -6px; }
   .page-header, .read-card { flex-direction: column; }
   .data-count { text-align: left; }
   .goal-grid, .two-column { grid-template-columns: 1fr; }
+  .source-strip { grid-template-columns: 1fr; }
+  .source-strip > :not(:last-child) { border-right: 0; }
+  .source-heading, .source-item { border-bottom: 1px solid var(--line); }
+  .source-item:last-child { border-bottom: 0; }
 }

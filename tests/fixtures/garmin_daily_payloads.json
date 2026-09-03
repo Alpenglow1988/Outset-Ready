@@ -1,0 +1,38 @@
+{
+  "body_composition": {
+    "totalAverage": {
+      "bodyFat": 29.3,
+      "weight": 91400
+    }
+  },
+  "hrv": {
+    "hrvSummary": {
+      "lastNightAvg": 47,
+      "status": "BALANCED"
+    }
+  },
+  "sleep": {
+    "dailySleepDTO": {
+      "sleepScores": {
+        "overall": {
+          "value": 82
+        }
+      },
+      "sleepTimeSeconds": 25200
+    }
+  },
+  "stress": {
+    "avgStressLevel": 31,
+    "bodyBatteryValuesArray": [
+      [1725000000, 0, 40],
+      [1725003600, 0, 60]
+    ]
+  },
+  "user_summary": {
+    "activeKilocalories": 367,
+    "restingHeartRate": 52,
+    "totalKilocalories": 2716,
+    "totalSteps": 6231
+  }
+}
+
