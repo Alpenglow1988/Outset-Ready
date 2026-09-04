@@ -343,6 +343,32 @@ Ready can provide:
 
 Ready should not repeat a rejected possibility. It should avoid saying that the user is ready until a full assessment supports that conclusion.
 
+### 13.4 Goal-centred event preparation
+
+The [Tracking and Training workbook](https://docs.google.com/spreadsheets/d/1uc93_Hncp_B9HTggw6BqNkCKbCbmMDCFiDyGuNElRDQ/edit) provides product-discovery evidence for a later event-readiness expansion. It is not a runtime dependency, event catalogue or source of application rules.
+
+After the V1 foundations and weekly-parity work, Ready may add:
+
+- a goal-linked event readiness workspace;
+- annual and cumulative progress against goal-relevant metrics;
+- personal pace, cut-off and fuelling preparation;
+- a multi-year adventure goal roadmap;
+- optional landmark achievement ladders.
+
+Ownership remains divided across the Outset portfolio:
+
+| Concern | Owner |
+| --- | --- |
+| Event discovery, sourced event facts and reusable readiness demands | Outset Core |
+| Personal goals, plans, evidence, progress and event-day preparation | Outset Ready |
+| Owned gear, equipment gaps and provision decisions | Outset Kit |
+
+Ready must remain useful with personal events and manual assumptions when Core is unavailable. It may surface unresolved equipment status, but Kit owns the durable inventory and resolution state.
+
+Friend competitions, medals, leaderboards and opaque points systems remain deferred. They are not part of this event-readiness expansion.
+
+Tracking: #22 and its linked child issues.
+
 ## 14. Migration and architecture constraints
 
 We will choose the application stack after inspecting the existing WL repository.
