@@ -261,3 +261,47 @@ Present possibilities as invitations to explore. Reserve readiness claims for a 
 ### DR-040: Outset hand-offs
 
 Use future event and activity records to connect Ready with Outset Explore, Prepare and Kit.
+
+## Spreadsheet-derived event-readiness expansion
+
+### DR-041: Treat the Tracking and Training workbook as product-discovery evidence
+
+**Date:** 4 September 2026
+
+Use the [Tracking and Training workbook](https://docs.google.com/spreadsheets/d/1uc93_Hncp_B9HTggw6BqNkCKbCbmMDCFiDyGuNElRDQ/edit) to identify useful workflows and reference examples.
+
+Do not make Ready depend on the spreadsheet at runtime or reproduce its formulas, stale facts, unit inconsistencies or two-person assumptions as application rules.
+
+### DR-042: Keep goal-centred event preparation in Ready
+
+**Date:** 4 September 2026
+
+Ready owns the personal, longitudinal parts of event preparation:
+
+- goals and priority handovers;
+- plans and completed evidence;
+- progress against goal-linked metrics;
+- personal pace and fuelling preparation;
+- preparation milestones, routines and readiness state.
+
+**Rationale:** These capabilities extend Ready's existing question, **Does what I’m doing still fit where I want to go?** They do not justify another application.
+
+The work remains post-parity and is coordinated through #22.
+
+### DR-043: Divide event and kit ownership across the Outset portfolio
+
+**Date:** 4 September 2026
+
+Outset Core owns discovery, sourced event facts and reusable event demands. Outset Ready owns the user's goals, evidence, progress and preparation state. Outset Kit owns durable equipment inventory, gaps and provision decisions.
+
+Ready may retain snapshots and personal assumptions so it remains usable when another Outset product is unavailable. It must not maintain a second kit ledger or treat the Core catalogue as an always-available runtime dependency.
+
+The canonical cross-product boundary lives in the Outset-App product architecture.
+
+### DR-044: Keep achievement ladders optional and defer social competition
+
+**Date:** 4 September 2026
+
+Treat landmark achievement ladders as an optional later motivation layer built from attributable Ready evidence. Keep them separate from goal assessment and avoid streak pressure.
+
+Defer friend challenges, medals, public leaderboards and opaque scoring. Do not create a separate Outset application for them until real use shows an independent product loop.
