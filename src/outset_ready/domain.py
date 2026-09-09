@@ -87,6 +87,7 @@ class Goal:
     target_unit: str | None = None
     target_date: date | None = None
     supports_goal_id: str | None = None
+    archived_at: datetime | None = None
 
 
 @dataclass(frozen=True)

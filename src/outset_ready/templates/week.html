@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Weekly read · Outset Ready</title>
     <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+    <script src="{{ url_for('static', path='/app.js') }}" defer></script>
   </head>
   <body>
     <div class="shell">
@@ -16,7 +17,7 @@
         <nav aria-label="Main navigation">
           <a class="nav-link" href="/">Overview</a>
           <a class="nav-link active" href="/week">Weekly read</a>
-          <span class="nav-link disabled">Goals</span>
+          <a class="nav-link" href="/goals">Goals</a>
           <span class="nav-link disabled">Events</span>
           <a class="nav-link" href="/connections">Connections</a>
         </nav>

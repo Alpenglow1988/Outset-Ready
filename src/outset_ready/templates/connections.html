@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Connections · Outset Ready</title>
     <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+    <script src="{{ url_for('static', path='/app.js') }}" defer></script>
   </head>
   <body>
     <div class="shell">
@@ -16,7 +17,7 @@
         <nav aria-label="Main navigation">
           <a class="nav-link" href="/">Overview</a>
           <a class="nav-link" href="/week">Weekly read</a>
-          <span class="nav-link disabled">Goals</span>
+          <a class="nav-link" href="/goals">Goals</a>
           <span class="nav-link disabled">Events</span>
           <a class="nav-link active" href="/connections">Connections</a>
         </nav>
@@ -44,7 +45,7 @@
               <p class="eyebrow">Activity and recovery</p>
               <h2>Garmin</h2>
               {% if garmin_connection and garmin_sync %}
-                <p>Latest operation: {{ garmin_sync.status.value | replace('_', ' ') }} for {{ garmin_sync.start_date.strftime('%d %b') }} to {{ garmin_sync.end_date.strftime('%d %b %Y') }}{% if garmin_sync.warnings %}, with {{ garmin_sync.warnings }} endpoint warning{% if garmin_sync.warnings != 1 %}s{% endif %}{% endif %}.</p>
+                <p>Latest request: {{ garmin_sync.status.value | replace('_', ' ') }} for {{ garmin_sync.start_date.strftime('%d %b') }} to {{ garmin_sync.end_date.strftime('%d %b %Y') }}{% if garmin_sync.warnings %}, with {{ garmin_sync.warnings }} endpoint warning{% if garmin_sync.warnings != 1 %}s{% endif %}{% endif %}.{% if history_progress.latest_covered_date %} Newest covered date: {{ history_progress.latest_covered_date.strftime('%d %b %Y') }}.{% endif %}</p>
               {% elif garmin_connection %}
                 <p>Your token file is saved. Run the first sync to verify it and import seven days of evidence.</p>
               {% else %}
@@ -56,9 +57,9 @@
                 {% if garmin_connection %}{{ garmin_connection.status.value | replace('_', ' ') }}{% else %}Not connected{% endif %}
               </span>
               {% if garmin_connection and garmin_connection.status.value != 'reconnect_required' %}
-                <form class="connection-form" method="post" action="/connections/garmin/sync">
+                <form class="connection-form" method="post" action="/connections/garmin/sync" data-pending>
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                  <button class="primary-button" type="submit">Sync now</button>
+                  <button class="primary-button" type="submit" data-pending-label="Syncing Garmin">Sync now</button>
                 </form>
               {% endif %}
               {% if garmin_connection and garmin_connection.status.value != 'reconnect_required' %}
@@ -73,17 +74,17 @@
                     <p class="field-hint">Ready has enough history for two weekly weight averages and the 30-day recovery baseline.</p>
                   {% elif history_progress.next_batch %}
                     <p class="field-hint">The next batch covers {{ history_progress.next_batch.start_date.strftime('%d %b') }} to {{ history_progress.next_batch.end_date.strftime('%d %b %Y') }}. Each batch runs separately to stay inside Vercel's function limit.</p>
-                    <form class="connection-form" method="post" action="/connections/garmin/backfill">
+                    <form class="connection-form" method="post" action="/connections/garmin/backfill" data-pending>
                       <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                      <button class="primary-button" type="submit">Import next history batch</button>
+                      <button class="primary-button" type="submit" data-pending-label="Importing history">Import next history batch</button>
                     </form>
                   {% endif %}
                 </section>
               {% endif %}
               {% if garmin_connection %}
-                <form class="connection-form" method="post" action="/connections/garmin/disconnect">
+                <form class="connection-form" method="post" action="/connections/garmin/disconnect" data-pending>
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                  <button class="quiet-action" type="submit">Remove connection</button>
+                  <button class="quiet-action" type="submit" data-pending-label="Removing connection">Remove connection</button>
                   <p class="field-hint">This removes the saved Garmin token. Ready keeps evidence you already imported.</p>
                 </form>
               {% endif %}
@@ -91,13 +92,13 @@
                 <summary>{% if garmin_connection %}Replace Garmin token{% else %}Connect Garmin{% endif %}</summary>
                 <p>Run this on your Mac. Garmin can ask for MFA there:</p>
                 <code>python -m outset_ready.cli export-garmin-token</code>
-                <form class="connection-form" method="post" action="/connections/garmin/token" enctype="multipart/form-data">
+                <form class="connection-form" method="post" action="/connections/garmin/token" enctype="multipart/form-data" data-pending>
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                   <label>
                     Garmin token file
                     <input type="file" name="token_file" accept="application/json,.json" required>
                   </label>
-                  <button class="primary-button" type="submit">Save connection</button>
+                  <button class="primary-button" type="submit" data-pending-label="Saving connection">Save connection</button>
                 </form>
                 <p class="field-hint">Ready encrypts the reusable tokens before storing them. The website never receives your Garmin password.</p>
               </details>

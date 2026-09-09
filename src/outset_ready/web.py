@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 from urllib.parse import quote
 
@@ -25,7 +25,12 @@ from outset_ready.connectors.garmin.tokens import (
     MAX_TOKEN_BUNDLE_BYTES,
     GarminTokenBundleError,
 )
-from outset_ready.domain import EvidenceKind, GoalPriority, OPTIONAL_CONTEXT_KINDS
+from outset_ready.domain import (
+    EvidenceKind,
+    GoalCategory,
+    GoalPriority,
+    OPTIONAL_CONTEXT_KINDS,
+)
 from outset_ready.history import calculate_history_progress
 from outset_ready.periods import last_completed_training_week
 from outset_ready.settings import AppSettings, load_app_settings
@@ -33,16 +38,20 @@ from outset_ready.session import SignedSessionMiddleware
 from outset_ready.storage import (
     ConnectorSyncAlreadyRunning,
     add_manual_evidence,
+    archive_goal,
     connect,
     count_evidence_days,
+    create_goal,
     database_is_ready,
     fetch_connector_connection,
     fetch_latest_connector_sync,
     init_db,
+    list_goals_as_of,
     list_connector_syncs,
     list_goals,
     list_recent_activities,
     list_recent_evidence,
+    update_goal,
 )
 from outset_ready.weekly import build_weekly_read
 
@@ -74,7 +83,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
         )
         yield
 
-    app = FastAPI(title="Outset Ready", version="0.4.0", lifespan=lifespan)
+    app = FastAPI(title="Outset Ready", version="0.5.0", lifespan=lifespan)
     app.state.settings = settings
     app.add_middleware(
         SignedSessionMiddleware,
@@ -96,7 +105,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
         response.headers["Referrer-Policy"] = "same-origin"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; style-src 'self'; img-src 'self'; "
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self'; "
             "form-action 'self'; frame-ancestors 'none'; base-uri 'self'"
         )
         return response
@@ -168,11 +177,16 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
                 user_id=user_id,
             )
             period_start, period_end = last_completed_training_week(today)
+            period_goals = list_goals_as_of(
+                conn,
+                effective_at=_end_of_day(period_end),
+                user_id=user_id,
+            )
             weekly_read = build_weekly_read(
                 conn,
                 period_start=period_start,
                 period_end=period_end,
-                target_weight_kg=_current_weight_target(goals),
+                target_weight_kg=_current_weight_target(period_goals),
                 user_id=user_id,
             )
 
@@ -210,13 +224,147 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
             },
         )
 
+    def render_goals(
+        request: Request,
+        *,
+        notice: str | None = None,
+        error: str | None = None,
+        status_code: int = 200,
+    ):
+        user_id = _require_owner(request, settings)
+        with connect(settings.database_target) as conn:
+            goals = list_goals(conn, user_id=user_id)
+            archived_goals = [
+                goal
+                for goal in list_goals(
+                    conn,
+                    user_id=user_id,
+                    include_archived=True,
+                )
+                if goal.archived_at is not None
+            ]
+        return templates.TemplateResponse(
+            request=request,
+            name="goals.html",
+            context={
+                "goals": goals,
+                "archived_goals": archived_goals,
+                "owner_email": settings.owner_email,
+                "csrf_token": _session_csrf_token(request),
+                "persistent_storage": settings.persistent_storage,
+                "goal_categories": GoalCategory,
+                "goal_priorities": GoalPriority,
+                "notice": notice,
+                "error": error,
+            },
+            status_code=status_code,
+        )
+
+    @app.get("/goals")
+    def goals_page(request: Request, notice: str | None = None):
+        notices = {
+            "created": "Goal added to your active stack.",
+            "updated": "Goal changes saved.",
+            "archived": "Goal archived. Its earlier history remains intact.",
+        }
+        return render_goals(request, notice=notices.get(notice or ""))
+
+    @app.post("/goals")
+    def create_goal_route(
+        request: Request,
+        title: str = Form(...),
+        category: str = Form(...),
+        priority: str = Form(...),
+        target_value: str = Form(""),
+        target_unit: str = Form(""),
+        target_date: str = Form(""),
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        try:
+            fields = _parse_goal_fields(
+                title=title,
+                category=category,
+                priority=priority,
+                target_value=target_value,
+                target_unit=target_unit,
+                target_date=target_date,
+            )
+            with connect(settings.database_target) as conn:
+                create_goal(conn, user_id=user_id, **fields)
+        except ValueError as exc:
+            return render_goals(request, error=str(exc), status_code=400)
+        return RedirectResponse(
+            url="/goals?notice=created",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.post("/goals/{goal_id}")
+    def update_goal_route(
+        request: Request,
+        goal_id: str,
+        title: str = Form(...),
+        category: str = Form(...),
+        priority: str = Form(...),
+        target_value: str = Form(""),
+        target_unit: str = Form(""),
+        target_date: str = Form(""),
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        try:
+            fields = _parse_goal_fields(
+                title=title,
+                category=category,
+                priority=priority,
+                target_value=target_value,
+                target_unit=target_unit,
+                target_date=target_date,
+            )
+            with connect(settings.database_target) as conn:
+                update_goal(conn, goal_id=goal_id, user_id=user_id, **fields)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            return render_goals(request, error=str(exc), status_code=400)
+        return RedirectResponse(
+            url="/goals?notice=updated",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.post("/goals/{goal_id}/archive")
+    def archive_goal_route(
+        request: Request,
+        goal_id: str,
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        try:
+            with connect(settings.database_target) as conn:
+                archive_goal(conn, goal_id=goal_id, user_id=user_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            return render_goals(request, error=str(exc), status_code=400)
+        return RedirectResponse(
+            url="/goals?notice=archived",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
     @app.get("/week")
     def weekly_read_page(request: Request):
         user_id = _require_owner(request, settings)
         today = date.today()
         period_start, period_end = last_completed_training_week(today)
         with connect(settings.database_target) as conn:
-            goals = list_goals(conn, user_id=user_id)
+            goals = list_goals_as_of(
+                conn,
+                effective_at=_end_of_day(period_end),
+                user_id=user_id,
+            )
             weekly_read = build_weekly_read(
                 conn,
                 period_start=period_start,
@@ -535,8 +683,48 @@ def _current_weight_target(goals) -> float | None:
     for goal in goals:
         if (
             goal.priority is GoalPriority.CURRENT
-            and goal.target_unit == "kg"
+            and goal.target_unit
+            and goal.target_unit.casefold() == "kg"
             and goal.target_value is not None
         ):
             return float(goal.target_value)
     return None
+
+
+def _end_of_day(value: date) -> datetime:
+    return datetime.combine(value, time.max, tzinfo=UTC)
+
+
+def _parse_goal_fields(
+    *,
+    title: str,
+    category: str,
+    priority: str,
+    target_value: str,
+    target_unit: str,
+    target_date: str,
+) -> dict:
+    try:
+        parsed_category = GoalCategory(category)
+    except ValueError as exc:
+        raise ValueError("Choose a health, fitness or adventure category.") from exc
+    try:
+        parsed_priority = GoalPriority(priority)
+    except ValueError as exc:
+        raise ValueError("Choose a current, supporting or future priority.") from exc
+    try:
+        parsed_target_value = float(target_value) if target_value.strip() else None
+    except ValueError as exc:
+        raise ValueError("Enter the target as a number.") from exc
+    try:
+        parsed_target_date = date.fromisoformat(target_date) if target_date else None
+    except ValueError as exc:
+        raise ValueError("Enter a valid target date.") from exc
+    return {
+        "title": title,
+        "category": parsed_category,
+        "priority": parsed_priority,
+        "target_value": parsed_target_value,
+        "target_unit": target_unit,
+        "target_date": parsed_target_date,
+    }

@@ -10,14 +10,17 @@ from outset_ready.domain import (
     DailyObservation,
     EvidenceKind,
     EvidenceSource,
+    GoalCategory,
     GoalPriority,
     ConnectorConnectionStatus,
 )
 from outset_ready.storage import (
     ConnectorSyncAlreadyRunning,
     add_manual_evidence,
+    archive_goal,
     connect,
     count_evidence_days,
+    create_goal,
     delete_connector_connection,
     ensure_owner,
     fetch_connector_connection,
@@ -29,6 +32,7 @@ from outset_ready.storage import (
     list_evidence_between,
     list_latest_evidence_of_kind,
     list_goals,
+    list_goals_as_of,
     list_recent_evidence,
     load_connector_credentials,
     mark_connector_connected,
@@ -38,6 +42,7 @@ from outset_ready.storage import (
     start_connector_sync,
     upsert_activity,
     upsert_daily_observation,
+    update_goal,
 )
 
 
@@ -58,6 +63,137 @@ def test_reference_goal_stack_is_seeded_idempotently(tmp_path):
     ]
     assert goals[0].priority is GoalPriority.CURRENT
     assert sum(goal.priority is GoalPriority.CURRENT for goal in goals) == 1
+
+
+def test_owner_can_create_edit_and_archive_goals(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        goal = create_goal(
+            conn,
+            title="  Complete a mountain day  ",
+            category=GoalCategory.ADVENTURE,
+            priority=GoalPriority.FUTURE,
+            target_date=date(2027, 6, 1),
+        )
+        edited = update_goal(
+            conn,
+            goal_id=goal.id,
+            title="Complete a long mountain day",
+            category=GoalCategory.ADVENTURE,
+            priority=GoalPriority.SUPPORTING,
+            target_value=20,
+            target_unit="km",
+            target_date=date(2027, 6, 1),
+        )
+        archived = archive_goal(conn, goal_id=goal.id)
+
+        active_goals = list_goals(conn)
+        all_goals = list_goals(conn, include_archived=True)
+
+    assert goal.title == "Complete a mountain day"
+    assert edited.target_value == 20
+    assert edited.target_unit == "km"
+    assert archived.archived_at is not None
+    assert goal.id not in {item.id for item in active_goals}
+    assert goal.id in {item.id for item in all_goals}
+
+
+def test_making_a_goal_current_records_the_explicit_priority_handover(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        initial_time = datetime.now(UTC)
+        goal = create_goal(
+            conn,
+            title="Prepare for the Ridgeway",
+            category=GoalCategory.ADVENTURE,
+            priority=GoalPriority.CURRENT,
+            target_date=date(2027, 5, 15),
+        )
+        goals = list_goals(conn)
+        before_handover = list_goals_as_of(conn, effective_at=initial_time)
+
+    assert sum(item.priority is GoalPriority.CURRENT for item in goals) == 1
+    assert next(item for item in goals if item.id == goal.id).priority is GoalPriority.CURRENT
+    previous_current = next(item for item in goals if item.id == "goal-weight-85")
+    historical_current = next(
+        item for item in before_handover if item.id == "goal-weight-85"
+    )
+    assert previous_current.priority is GoalPriority.SUPPORTING
+    assert historical_current.priority is GoalPriority.CURRENT
+
+
+def test_goal_revisions_preserve_the_target_used_by_an_earlier_week(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        before_edit = datetime.now(UTC)
+        update_goal(
+            conn,
+            goal_id="goal-weight-85",
+            title="Reach 82 kg",
+            category=GoalCategory.HEALTH,
+            priority=GoalPriority.CURRENT,
+            target_value=82,
+            target_unit="kg",
+        )
+        historical = list_goals_as_of(conn, effective_at=before_edit)
+        current = list_goals(conn)
+
+    assert next(item for item in historical if item.id == "goal-weight-85").target_value == 85
+    assert next(item for item in current if item.id == "goal-weight-85").target_value == 82
+
+
+def test_current_goal_must_be_replaced_before_it_can_be_archived(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn, pytest.raises(ValueError, match="different current goal"):
+        archive_goal(conn, goal_id="goal-weight-85")
+
+
+def test_current_goal_must_be_replaced_before_its_priority_can_change(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn, pytest.raises(ValueError, match="different current goal"):
+        update_goal(
+            conn,
+            goal_id="goal-weight-85",
+            title="Reach 85 kg",
+            category=GoalCategory.HEALTH,
+            priority=GoalPriority.SUPPORTING,
+            target_value=85,
+            target_unit="kg",
+        )
+
+
+@pytest.mark.parametrize(
+    ("target_value", "target_unit", "message"),
+    [
+        (85, "", "both a target value"),
+        (None, "kg", "both a target value"),
+        (0, "kg", "greater than zero"),
+        (float("nan"), "kg", "greater than zero"),
+    ],
+)
+def test_goal_targets_are_validated(tmp_path, target_value, target_unit, message):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn, pytest.raises(ValueError, match=message):
+        create_goal(
+            conn,
+            title="A valid title",
+            category=GoalCategory.HEALTH,
+            priority=GoalPriority.SUPPORTING,
+            target_value=target_value,
+            target_unit=target_unit,
+        )
 
 
 def test_manual_evidence_keeps_optional_context_optional(tmp_path):

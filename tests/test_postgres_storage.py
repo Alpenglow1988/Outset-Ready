@@ -45,6 +45,7 @@ def test_postgres_implements_the_ready_storage_contract():
                 "activities",
                 "daily_observations",
                 "evidence_records",
+                "goal_revisions",
                 "goals",
                 "users",
             ):
