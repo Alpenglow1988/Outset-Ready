@@ -25,8 +25,9 @@ from outset_ready.connectors.garmin.tokens import (
     MAX_TOKEN_BUNDLE_BYTES,
     GarminTokenBundleError,
 )
-from outset_ready.domain import EvidenceKind, OPTIONAL_CONTEXT_KINDS
-from outset_ready.readiness import ReadinessSignals, assess_readiness
+from outset_ready.domain import EvidenceKind, GoalPriority, OPTIONAL_CONTEXT_KINDS
+from outset_ready.history import calculate_history_progress
+from outset_ready.periods import last_completed_training_week
 from outset_ready.settings import AppSettings, load_app_settings
 from outset_ready.session import SignedSessionMiddleware
 from outset_ready.storage import (
@@ -38,10 +39,12 @@ from outset_ready.storage import (
     fetch_connector_connection,
     fetch_latest_connector_sync,
     init_db,
+    list_connector_syncs,
     list_goals,
     list_recent_activities,
     list_recent_evidence,
 )
+from outset_ready.weekly import build_weekly_read
 
 
 PACKAGE_DIR = Path(__file__).parent
@@ -71,7 +74,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
         )
         yield
 
-    app = FastAPI(title="Outset Ready", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="Outset Ready", version="0.4.0", lifespan=lifespan)
     app.state.settings = settings
     app.add_middleware(
         SignedSessionMiddleware,
@@ -147,6 +150,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
     @app.get("/")
     def dashboard(request: Request):
         user_id = _require_owner(request, settings)
+        today = date.today()
         with connect(settings.database_target) as conn:
             goals = list_goals(conn, user_id=user_id)
             evidence = list_recent_evidence(conn, user_id=user_id)
@@ -158,8 +162,25 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
                 connector="garmin",
                 user_id=user_id,
             )
+            garmin_syncs = list_connector_syncs(
+                conn,
+                "garmin",
+                user_id=user_id,
+            )
+            period_start, period_end = last_completed_training_week(today)
+            weekly_read = build_weekly_read(
+                conn,
+                period_start=period_start,
+                period_end=period_end,
+                target_weight_kg=_current_weight_target(goals),
+                user_id=user_id,
+            )
 
-        assessment = assess_readiness(ReadinessSignals(evidence_days=evidence_days))
+        assessment = weekly_read.assessment
+        history_progress = calculate_history_progress(
+            garmin_syncs,
+            today=today,
+        )
         visible_evidence = [
             record for record in evidence if record.kind not in OPTIONAL_CONTEXT_KINDS
         ]
@@ -178,11 +199,38 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
                 "activities": activities,
                 "garmin_sync": garmin_sync,
                 "garmin_connection": garmin_connection,
-                "today": date.today().isoformat(),
+                "today": today.isoformat(),
                 "evidence_options": EVIDENCE_OPTIONS,
                 "optional_options": OPTIONAL_OPTIONS,
                 "csrf_token": _session_csrf_token(request),
                 "owner_email": settings.owner_email,
+                "persistent_storage": settings.persistent_storage,
+                "weekly_read": weekly_read,
+                "history_progress": history_progress,
+            },
+        )
+
+    @app.get("/week")
+    def weekly_read_page(request: Request):
+        user_id = _require_owner(request, settings)
+        today = date.today()
+        period_start, period_end = last_completed_training_week(today)
+        with connect(settings.database_target) as conn:
+            goals = list_goals(conn, user_id=user_id)
+            weekly_read = build_weekly_read(
+                conn,
+                period_start=period_start,
+                period_end=period_end,
+                target_weight_kg=_current_weight_target(goals),
+                user_id=user_id,
+            )
+        return templates.TemplateResponse(
+            request=request,
+            name="week.html",
+            context={
+                "weekly_read": weekly_read,
+                "owner_email": settings.owner_email,
+                "csrf_token": _session_csrf_token(request),
                 "persistent_storage": settings.persistent_storage,
             },
         )
@@ -218,6 +266,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
         status_code: int = 200,
     ):
         user_id = _require_owner(request, settings)
+        today = date.today()
         with connect(settings.database_target) as conn:
             garmin_sync = fetch_latest_connector_sync(conn, "garmin", user_id=user_id)
             garmin_connection = fetch_connector_connection(
@@ -225,6 +274,15 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
                 connector="garmin",
                 user_id=user_id,
             )
+            garmin_syncs = list_connector_syncs(
+                conn,
+                "garmin",
+                user_id=user_id,
+            )
+        history_progress = calculate_history_progress(
+            garmin_syncs,
+            today=today,
+        )
         return templates.TemplateResponse(
             request=request,
             name="connections.html",
@@ -236,6 +294,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
                 "persistent_storage": settings.persistent_storage,
                 "notice": notice,
                 "error": error,
+                "history_progress": history_progress,
             },
             status_code=status_code,
         )
@@ -247,6 +306,12 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
                 "Garmin token saved. Run the first sync to verify the connection."
             ),
             "garmin-sync-complete": "Garmin sync completed.",
+            "garmin-history-batch-complete": (
+                "Garmin history batch completed. Continue until the history check is full."
+            ),
+            "garmin-history-complete": (
+                "Garmin history already covers the 42-day comparison window."
+            ),
             "garmin-disconnected": (
                 "Garmin connection removed. Imported evidence remains available."
             ),
@@ -277,6 +342,60 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
             )
         return RedirectResponse(
             url="/connections?notice=garmin-token-saved",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.post("/connections/garmin/backfill")
+    def backfill_garmin_connection(
+        request: Request,
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        today = date.today()
+        with connect(settings.database_target) as conn:
+            progress = calculate_history_progress(
+                list_connector_syncs(conn, "garmin", user_id=user_id),
+                today=today,
+            )
+        if progress.complete or progress.next_batch is None:
+            return RedirectResponse(
+                url="/connections?notice=garmin-history-complete",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+        try:
+            sync_hosted_garmin(
+                settings,
+                user_id=user_id,
+                days=progress.next_batch.days,
+                end_date=progress.next_batch.end_date,
+            )
+        except ConnectorSyncAlreadyRunning:
+            return render_connections(
+                request,
+                error="A Garmin sync is already running. Wait for it to finish.",
+                status_code=409,
+            )
+        except (GarminAuthenticationRequiredError, GarminConnectionUnavailable):
+            return render_connections(
+                request,
+                error=(
+                    "Garmin requires a new token file. Authenticate on your Mac, "
+                    "then replace the saved connection."
+                ),
+                status_code=409,
+            )
+        except GarminConnectorError:
+            return render_connections(
+                request,
+                error=(
+                    "Garmin could not finish this history batch. Completed batches "
+                    "remain available, so you can retry it."
+                ),
+                status_code=502,
+            )
+        return RedirectResponse(
+            url="/connections?notice=garmin-history-batch-complete",
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -410,3 +529,14 @@ def _login_response(
         },
         status_code=status_code,
     )
+
+
+def _current_weight_target(goals) -> float | None:
+    for goal in goals:
+        if (
+            goal.priority is GoalPriority.CURRENT
+            and goal.target_unit == "kg"
+            and goal.target_value is not None
+        ):
+            return float(goal.target_value)
+    return None

@@ -1,4 +1,5 @@
 import re
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,13 +7,26 @@ from fastapi.testclient import TestClient
 from outset_ready.auth import hash_password
 from outset_ready.connectors.garmin.client import GarminAuthenticationRequiredError
 from outset_ready.credentials import CredentialCipher, generate_credential_encryption_key
-from outset_ready.domain import ConnectorConnectionStatus
+from outset_ready.domain import (
+    ActivityRecord,
+    ActivityType,
+    ConnectorConnectionStatus,
+    ConnectorSyncStatus,
+    DailyObservation,
+    EvidenceSource,
+)
+from outset_ready.periods import last_completed_training_week
 from outset_ready.settings import AppSettings
 from outset_ready.storage import (
     connect,
     fetch_connector_connection,
+    finish_connector_sync,
     list_recent_evidence,
     load_connector_credentials,
+    save_connector_credentials,
+    start_connector_sync,
+    upsert_activity,
+    upsert_daily_observation,
 )
 from outset_ready.web import create_app
 
@@ -88,6 +102,52 @@ def test_owner_can_sign_in_and_see_reference_goal_stack(client):
     assert "never require them" in dashboard.text
     assert OWNER_EMAIL in dashboard.text
     assert client.get("/static/outset-mark.svg").status_code == 200
+
+
+def test_weekly_read_is_private_and_shows_completed_week_evidence(client, settings):
+    assert client.get("/week", follow_redirects=False).status_code == 303
+    sign_in(client)
+    period_start, period_end = last_completed_training_week(date.today())
+    with connect(settings.database_target) as conn:
+        for offset in range(7):
+            upsert_daily_observation(
+                conn,
+                DailyObservation(
+                    recorded_on=period_start + timedelta(days=offset),
+                    source=EvidenceSource.GARMIN,
+                    weight_kg=91.6 - (offset * 0.1),
+                    sleep_hours=7,
+                ),
+            )
+            upsert_daily_observation(
+                conn,
+                DailyObservation(
+                    recorded_on=period_start - timedelta(days=7 - offset),
+                    source=EvidenceSource.GARMIN,
+                    weight_kg=92,
+                ),
+            )
+        upsert_activity(
+            conn,
+            ActivityRecord(
+                source=EvidenceSource.GARMIN,
+                external_id="weekly-run",
+                recorded_on=period_end,
+                activity_type=ActivityType.RUN,
+                name="Long easy run",
+                duration_seconds=5400,
+                distance_meters=12000,
+            ),
+        )
+
+    response = client.get("/week")
+
+    assert response.status_code == 200
+    assert "Your weekly evidence" in response.text
+    assert "Progressing" in response.text
+    assert "Long easy run" in response.text
+    assert "12.0 km" in response.text
+    assert "A missing value stays unknown" in response.text
 
 
 def test_invalid_login_is_generic_and_does_not_authenticate(client):
@@ -251,6 +311,62 @@ def test_owner_can_start_hosted_sync(client, monkeypatch):
     assert response.status_code == 303
     assert response.headers["location"] == "/connections?notice=garmin-sync-complete"
     assert calls[0][1] == "owner"
+
+
+def test_owner_can_backfill_one_resumable_history_batch(client, settings, monkeypatch):
+    sign_in(client)
+    today = date.today()
+    with connect(settings.database_target) as conn:
+        save_connector_credentials(
+            conn,
+            connector="garmin",
+            encrypted_credentials="test-ciphertext",
+            status=ConnectorConnectionStatus.CONNECTED,
+        )
+        sync_id = start_connector_sync(
+            conn,
+            connector="garmin",
+            start_date=today - timedelta(days=6),
+            end_date=today,
+        )
+        finish_connector_sync(
+            conn,
+            sync_id,
+            status=ConnectorSyncStatus.COMPLETED,
+            daily_records=7,
+            activity_records=2,
+            warnings=0,
+        )
+    page = client.get("/connections")
+    calls = []
+
+    def sync(_settings, *, user_id, days, end_date):
+        calls.append((user_id, days, end_date))
+
+    monkeypatch.setattr("outset_ready.web.sync_hosted_garmin", sync)
+    response = client.post(
+        "/connections/garmin/backfill",
+        data={"csrf_token": csrf_from(page)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        "/connections?notice=garmin-history-batch-complete"
+    )
+    assert calls == [("owner", 7, today - timedelta(days=7))]
+    assert "7 of 42" in page.text
+
+
+def test_history_backfill_requires_valid_csrf(client):
+    sign_in(client)
+
+    response = client.post(
+        "/connections/garmin/backfill",
+        data={"csrf_token": "wrong"},
+    )
+
+    assert response.status_code == 403
 
 
 def test_owner_can_remove_garmin_connection(client, settings):

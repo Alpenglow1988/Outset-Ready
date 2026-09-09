@@ -391,6 +391,56 @@ def list_recent_evidence(
     ]
 
 
+def list_evidence_between(
+    conn,
+    *,
+    start_date: date,
+    end_date: date,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> list[EvidenceRecord]:
+    rows = _execute(
+        conn,
+        """
+        SELECT id, recorded_on, source, kind, value, unit, note
+        FROM evidence_records
+        WHERE user_id = ? AND recorded_on BETWEEN ? AND ?
+        ORDER BY recorded_on ASC, created_at DESC
+        """,
+        (user_id, start_date.isoformat(), end_date.isoformat()),
+    ).fetchall()
+    return [_evidence_record_from_row(row) for row in rows]
+
+
+def list_latest_evidence_of_kind(
+    conn,
+    *,
+    kind: EvidenceKind,
+    through_date: date,
+    limit: int = 2,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> list[EvidenceRecord]:
+    rows = _execute(
+        conn,
+        """
+        SELECT id, recorded_on, source, kind, value, unit, note
+        FROM (
+            SELECT id, recorded_on, source, kind, value, unit, note, created_at,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY recorded_on
+                       ORDER BY created_at DESC, id DESC
+                   ) AS date_rank
+            FROM evidence_records
+            WHERE user_id = ? AND kind = ? AND recorded_on <= ?
+        ) AS ranked_evidence
+        WHERE date_rank = 1
+        ORDER BY recorded_on DESC, created_at DESC
+        LIMIT ?
+        """,
+        (user_id, kind.value, through_date.isoformat(), limit),
+    ).fetchall()
+    return [_evidence_record_from_row(row) for row in rows]
+
+
 def count_evidence_days(conn, *, user_id: str = DEFAULT_OWNER_ID) -> int:
     row = _execute(
         conn,
@@ -479,6 +529,51 @@ def upsert_daily_observation(
         )
 
 
+def list_daily_observations_between(
+    conn,
+    *,
+    start_date: date,
+    end_date: date,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> list[DailyObservation]:
+    rows = _execute(
+        conn,
+        """
+        SELECT recorded_on, source, weight_kg, body_fat_percent, fat_mass_kg,
+               lean_mass_kg, steps, resting_hr, sleep_hours, sleep_score,
+               stress_score, hrv_value, hrv_status, body_battery_avg,
+               active_calories, total_calories, source_ref
+        FROM daily_observations
+        WHERE user_id = ? AND recorded_on BETWEEN ? AND ?
+        ORDER BY recorded_on ASC,
+                 CASE source WHEN 'manual' THEN 0 ELSE 1 END
+        """,
+        (user_id, start_date.isoformat(), end_date.isoformat()),
+    ).fetchall()
+    return [
+        DailyObservation(
+            recorded_on=date.fromisoformat(row["recorded_on"]),
+            source=EvidenceSource(row["source"]),
+            weight_kg=row["weight_kg"],
+            body_fat_percent=row["body_fat_percent"],
+            fat_mass_kg=row["fat_mass_kg"],
+            lean_mass_kg=row["lean_mass_kg"],
+            steps=row["steps"],
+            resting_hr=row["resting_hr"],
+            sleep_hours=row["sleep_hours"],
+            sleep_score=row["sleep_score"],
+            stress_score=row["stress_score"],
+            hrv_value=row["hrv_value"],
+            hrv_status=row["hrv_status"],
+            body_battery_avg=row["body_battery_avg"],
+            active_calories=row["active_calories"],
+            total_calories=row["total_calories"],
+            source_ref=row["source_ref"],
+        )
+        for row in rows
+    ]
+
+
 def upsert_activity(
     conn,
     activity: ActivityRecord,
@@ -559,6 +654,28 @@ def list_recent_activities(
         )
         for row in rows
     ]
+
+
+def list_activities_between(
+    conn,
+    *,
+    start_date: date,
+    end_date: date,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> list[ActivityRecord]:
+    rows = _execute(
+        conn,
+        """
+        SELECT source, external_id, recorded_on, activity_type, name,
+               duration_seconds, distance_meters, elevation_gain_meters,
+               average_hr, calories, source_ref
+        FROM activities
+        WHERE user_id = ? AND recorded_on BETWEEN ? AND ?
+        ORDER BY recorded_on DESC, updated_at DESC
+        """,
+        (user_id, start_date.isoformat(), end_date.isoformat()),
+    ).fetchall()
+    return [_activity_record_from_row(row) for row in rows]
 
 
 def start_connector_sync(
@@ -685,6 +802,29 @@ def fetch_latest_connector_sync(
         warnings=row["warnings"],
         error_message=row["error_message"],
     )
+
+
+def list_connector_syncs(
+    conn,
+    connector: str,
+    *,
+    limit: int = 100,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> list[ConnectorSync]:
+    rows = _execute(
+        conn,
+        """
+        SELECT id, connector, status, started_at, finished_at, start_date,
+               end_date, daily_records, activity_records, warnings,
+               error_message
+        FROM connector_syncs
+        WHERE user_id = ? AND connector = ?
+        ORDER BY started_at DESC
+        LIMIT ?
+        """,
+        (user_id, connector, limit),
+    ).fetchall()
+    return [_connector_sync_from_row(row) for row in rows]
 
 
 def save_connector_credentials(
@@ -868,6 +1008,52 @@ def database_is_ready(target: DatabaseTarget) -> bool:
     except Exception:
         return False
     return True
+
+
+def _evidence_record_from_row(row) -> EvidenceRecord:
+    return EvidenceRecord(
+        id=row["id"],
+        recorded_on=date.fromisoformat(row["recorded_on"]),
+        source=EvidenceSource(row["source"]),
+        kind=EvidenceKind(row["kind"]),
+        value=row["value"],
+        unit=row["unit"],
+        note=row["note"],
+    )
+
+
+def _activity_record_from_row(row) -> ActivityRecord:
+    return ActivityRecord(
+        source=EvidenceSource(row["source"]),
+        external_id=row["external_id"],
+        recorded_on=date.fromisoformat(row["recorded_on"]),
+        activity_type=ActivityType(row["activity_type"]),
+        name=row["name"],
+        duration_seconds=row["duration_seconds"],
+        distance_meters=row["distance_meters"],
+        elevation_gain_meters=row["elevation_gain_meters"],
+        average_hr=row["average_hr"],
+        calories=row["calories"],
+        source_ref=row["source_ref"],
+    )
+
+
+def _connector_sync_from_row(row) -> ConnectorSync:
+    return ConnectorSync(
+        id=row["id"],
+        connector=row["connector"],
+        status=ConnectorSyncStatus(row["status"]),
+        started_at=datetime.fromisoformat(row["started_at"]),
+        finished_at=(
+            datetime.fromisoformat(row["finished_at"]) if row["finished_at"] else None
+        ),
+        start_date=date.fromisoformat(row["start_date"]),
+        end_date=date.fromisoformat(row["end_date"]),
+        daily_records=row["daily_records"],
+        activity_records=row["activity_records"],
+        warnings=row["warnings"],
+        error_message=row["error_message"],
+    )
 
 
 def _execute(conn, statement: str, parameters: Sequence[Any] = ()):

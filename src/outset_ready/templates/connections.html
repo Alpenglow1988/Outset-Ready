@@ -15,7 +15,7 @@
         </a>
         <nav aria-label="Main navigation">
           <a class="nav-link" href="/">Overview</a>
-          <span class="nav-link disabled">Week in progress</span>
+          <a class="nav-link" href="/week">Weekly read</a>
           <span class="nav-link disabled">Goals</span>
           <span class="nav-link disabled">Events</span>
           <a class="nav-link active" href="/connections">Connections</a>
@@ -44,7 +44,7 @@
               <p class="eyebrow">Activity and recovery</p>
               <h2>Garmin</h2>
               {% if garmin_connection and garmin_sync %}
-                <p>Last sync: {{ garmin_sync.status.value | replace('_', ' ') }} through {{ garmin_sync.end_date.strftime('%d %b %Y') }}.</p>
+                <p>Latest operation: {{ garmin_sync.status.value | replace('_', ' ') }} for {{ garmin_sync.start_date.strftime('%d %b') }} to {{ garmin_sync.end_date.strftime('%d %b %Y') }}{% if garmin_sync.warnings %}, with {{ garmin_sync.warnings }} endpoint warning{% if garmin_sync.warnings != 1 %}s{% endif %}{% endif %}.</p>
               {% elif garmin_connection %}
                 <p>Your token file is saved. Run the first sync to verify it and import seven days of evidence.</p>
               {% else %}
@@ -60,6 +60,25 @@
                   <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                   <button class="primary-button" type="submit">Sync now</button>
                 </form>
+              {% endif %}
+              {% if garmin_connection and garmin_connection.status.value != 'reconnect_required' %}
+                <section class="history-progress" aria-labelledby="history-progress-title">
+                  <p class="eyebrow" id="history-progress-title">Comparison history</p>
+                  <div class="history-progress-count">
+                    <strong>{{ history_progress.covered_days }} of {{ history_progress.target_days }}</strong>
+                    <span>days checked</span>
+                  </div>
+                  <progress value="{{ history_progress.covered_days }}" max="{{ history_progress.target_days }}">{{ history_progress.covered_days }} of {{ history_progress.target_days }} days</progress>
+                  {% if history_progress.complete %}
+                    <p class="field-hint">Ready has enough history for two weekly weight averages and the 30-day recovery baseline.</p>
+                  {% elif history_progress.next_batch %}
+                    <p class="field-hint">The next batch covers {{ history_progress.next_batch.start_date.strftime('%d %b') }} to {{ history_progress.next_batch.end_date.strftime('%d %b %Y') }}. Each batch runs separately to stay inside Vercel's function limit.</p>
+                    <form class="connection-form" method="post" action="/connections/garmin/backfill">
+                      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                      <button class="primary-button" type="submit">Import next history batch</button>
+                    </form>
+                  {% endif %}
+                </section>
               {% endif %}
               {% if garmin_connection %}
                 <form class="connection-form" method="post" action="/connections/garmin/disconnect">

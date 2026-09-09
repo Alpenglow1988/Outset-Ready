@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 
 from outset_ready.connectors.garmin.client import (
@@ -55,6 +56,7 @@ def sync_hosted_garmin(
     *,
     user_id: str,
     days: int = 7,
+    end_date: date | None = None,
     client_factory: Callable[[GarminSettings], GarminClient] = GarminClient,
 ) -> GarminSyncStats:
     cipher = CredentialCipher(settings.credential_encryption_key)
@@ -104,6 +106,7 @@ def sync_hosted_garmin(
         stats = sync_garmin(
             transient_settings,
             days=days,
+            end_date=end_date,
             client_factory=client_factory,
             token_bundle=token_bundle,
             token_updated=persist_refreshed_token,
