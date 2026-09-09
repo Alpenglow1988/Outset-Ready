@@ -8,7 +8,7 @@ Ready starts with the user’s goal, gathers evidence from Garmin or manual entr
 
 ## Current status
 
-The first five application slices now provide a private, durable owner workspace:
+The first six application slices now provide a private, durable owner workspace:
 
 - A desktop-first, responsive dashboard.
 - The reference goal stack persisted in SQLite.
@@ -26,8 +26,13 @@ The first five application slices now provide a private, durable owner workspace
 - Local Garmin MFA authentication with a safe token-file export.
 - Owner-only token upload, encrypted Neon storage and hosted `Sync now`.
 - Refreshed Garmin token persistence without new Vercel variables or deployments.
+- A resumable 42-day hosted history import that runs in seven-day batches.
+- A completed Monday-to-Sunday weekly evidence read.
+- WL-parity weight, waist, activity and recovery calculations.
+- Per-metric coverage so missing Garmin values remain visible and unknown.
 
-Weekly insight parity with WL follows the hosted connection.
+Ready now covers WL's deterministic weekly evidence layer. Planned-versus-completed
+work and confirmed AI interpretation remain later, separate product slices.
 
 ## Run locally
 
@@ -102,6 +107,12 @@ owner-only file permissions and never prints its contents. Sign in to Ready, ope
 Connections, upload the file and select `Sync now`. Remove the exported file after
 Ready accepts it.
 
+The first sync imports seven days. Use `Import next history batch` on Connections
+until Ready shows 42 of 42 checked days. Ready runs one persisted batch per request,
+so an interrupted import resumes without repeating completed intervals. Open
+`Weekly read` after the history import to inspect the last completed Monday-to-Sunday
+period and the evidence behind each total.
+
 Ready encrypts the reusable token bundle before storing it in Postgres. Each hosted
 sync saves any refreshed token material back to Postgres. Garmin passwords remain
 local and never enter the website, Postgres or Vercel.
@@ -132,7 +143,8 @@ users.
 - [V1 product brief](docs/product/v1-product-brief.md)
 - [Decision log](docs/product/decision-log.md)
 - [V1 architecture](docs/engineering/architecture.md)
+- [WL parity decisions](docs/engineering/wl-parity.md)
 
 ## WL boundary
 
-The attached WL implementation passes all 136 tests under Python 3.12. Ready has moved its proven Garmin acquisition and defensive normalisation behaviour behind Ready-owned interfaces. It does not depend on the WL repository at runtime, and no WL secrets, raw payloads, local database or generated reports were copied.
+The attached WL implementation passes all 136 tests under Python 3.12. Ready has moved its proven Garmin acquisition, defensive normalisation and weekly metric behaviour behind Ready-owned interfaces. It does not depend on the WL repository at runtime, and no WL secrets, raw payloads, local database or generated reports were copied.

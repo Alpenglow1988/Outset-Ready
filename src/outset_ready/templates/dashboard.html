@@ -15,7 +15,7 @@
         </a>
         <nav aria-label="Main navigation">
           <a class="nav-link active" href="/">Overview</a>
-          <span class="nav-link disabled">Week in progress</span>
+          <a class="nav-link" href="/week">Weekly read</a>
           <span class="nav-link disabled">Goals</span>
           <span class="nav-link disabled">Events</span>
           <a class="nav-link" href="/connections">Connections</a>
@@ -52,6 +52,10 @@
             <span>evidence day{% if evidence_days != 1 %}s{% endif %}</span>
           </div>
         </section>
+        <div class="read-action-row">
+          <a class="primary-button button-link" href="/week">Inspect the completed week</a>
+          <span>{{ weekly_read.period_start.strftime('%d %b') }} to {{ weekly_read.period_end.strftime('%d %b %Y') }}</span>
+        </div>
 
         <section class="source-strip" aria-label="Evidence sources">
           <div class="source-heading">
@@ -72,7 +76,7 @@
             {% if garmin_connection and garmin_connection.status.value == 'reconnect_required' %}
               <p><a class="text-link" href="/connections">Reconnect Garmin</a> to resume imports. Existing evidence remains available.</p>
             {% elif garmin_sync %}
-              <p>Synced through {{ garmin_sync.end_date.strftime('%d %b %Y') }}. {{ garmin_sync.daily_records }} daily records and {{ garmin_sync.activity_records }} activities processed.</p>
+              <p>{% if history_progress.latest_covered_date %}Evidence checked through {{ history_progress.latest_covered_date.strftime('%d %b %Y') }}.{% endif %} The latest operation processed {{ garmin_sync.daily_records }} daily records and {{ garmin_sync.activity_records }} activities.</p>
             {% elif garmin_connection %}
               <p><a class="text-link" href="/connections">Run the first sync</a> to verify the saved token and import evidence.</p>
             {% else %}

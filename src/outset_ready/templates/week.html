@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Weekly read · Outset Ready</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="Outset Ready home">
+          <img class="brand-mark" src="{{ url_for('static', path='/outset-mark.svg') }}" alt="">
+          <span>Outset <strong>Ready</strong></span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a class="nav-link" href="/">Overview</a>
+          <a class="nav-link active" href="/week">Weekly read</a>
+          <span class="nav-link disabled">Goals</span>
+          <span class="nav-link disabled">Events</span>
+          <a class="nav-link" href="/connections">Connections</a>
+        </nav>
+        <div class="sidebar-footer">
+          <p class="sidebar-note">{{ owner_email }}<br>{% if persistent_storage %}Persistent private data{% else %}Local development data{% endif %}</p>
+          <form class="logout-form" method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="nav-link logout-button" type="submit">Sign out</button>
+          </form>
+        </div>
+      </aside>
+
+      <main>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Last completed Monday to Sunday</p>
+            <h1>Your weekly evidence</h1>
+            <p class="lede">{{ weekly_read.period_start.strftime('%d %B') }} to {{ weekly_read.period_end.strftime('%d %B %Y') }}</p>
+          </div>
+          <span class="status status-{{ weekly_read.assessment.state.value | lower | replace(' ', '-') }}">
+            {{ weekly_read.assessment.state.value }}
+          </span>
+        </header>
+
+        <section class="read-card weekly-summary">
+          <div>
+            <p class="eyebrow">Rules-based read</p>
+            <h2>{{ weekly_read.assessment.summary }}</h2>
+            <p>{{ weekly_read.assessment.next_step }}</p>
+          </div>
+          <p class="calculation-note">Ready calculates this read from verified evidence. No AI has interpreted it.</p>
+        </section>
+
+        <section class="metric-section">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Direction</p>
+              <h2>Weight and measurements</h2>
+            </div>
+          </div>
+          <div class="metric-grid">
+            <article class="metric-card metric-card-strong">
+              <span>Latest weight</span>
+              <strong>{% if weekly_read.weight.latest_weight_kg is not none %}{{ '%.1f' | format(weekly_read.weight.latest_weight_kg) }} kg{% else %}Unknown{% endif %}</strong>
+              <small>{% if weekly_read.weight.latest_weight_date %}{{ weekly_read.weight.latest_weight_date.strftime('%d %b') }}{% else %}No measurement{% endif %}</small>
+            </article>
+            <article class="metric-card">
+              <span>Weekly average</span>
+              <strong>{% if weekly_read.weight.seven_day_average_weight_kg is not none %}{{ '%.1f' | format(weekly_read.weight.seven_day_average_weight_kg) }} kg{% else %}Unknown{% endif %}</strong>
+              <small>{{ weekly_read.weight.current_sample_days }} measured day{% if weekly_read.weight.current_sample_days != 1 %}s{% endif %}</small>
+            </article>
+            <article class="metric-card">
+              <span>Previous average</span>
+              <strong>{% if weekly_read.weight.previous_seven_day_average_weight_kg is not none %}{{ '%.1f' | format(weekly_read.weight.previous_seven_day_average_weight_kg) }} kg{% else %}Unknown{% endif %}</strong>
+              <small>{{ weekly_read.weight.previous_sample_days }} measured day{% if weekly_read.weight.previous_sample_days != 1 %}s{% endif %}</small>
+            </article>
+            <article class="metric-card metric-card-strong">
+              <span>Weekly change</span>
+              <strong>{% if weekly_read.weight.weekly_weight_change_kg is not none %}{% if weekly_read.weight.weekly_weight_change_kg > 0 %}+{% endif %}{{ '%.1f' | format(weekly_read.weight.weekly_weight_change_kg) }} kg{% else %}Unknown{% endif %}</strong>
+              <small>Latest average minus previous average</small>
+            </article>
+            <article class="metric-card">
+              <span>30-day change</span>
+              <strong>{% if weekly_read.weight.thirty_day_weight_change_kg is not none %}{% if weekly_read.weight.thirty_day_weight_change_kg > 0 %}+{% endif %}{{ '%.1f' | format(weekly_read.weight.thirty_day_weight_change_kg) }} kg{% else %}Unknown{% endif %}</strong>
+              <small>Latest reading against the reading around 30 days earlier</small>
+            </article>
+            <article class="metric-card">
+              <span>Remaining to target</span>
+              <strong>{% if weekly_read.weight.kg_remaining_to_target_weight is not none %}{{ '%.1f' | format(weekly_read.weight.kg_remaining_to_target_weight) }} kg{% else %}Unknown{% endif %}</strong>
+              <small>Current reference goal</small>
+            </article>
+          </div>
+
+          <div class="submetric-grid">
+            <article class="panel compact-panel">
+              <p class="eyebrow">Body composition</p>
+              <dl class="definition-list">
+                <div><dt>Body fat</dt><dd>{% if weekly_read.body_composition.latest_body_fat_percent is not none %}{{ '%.1f' | format(weekly_read.body_composition.latest_body_fat_percent) }}%{% else %}Unknown{% endif %}</dd></div>
+                <div><dt>Fat mass</dt><dd>{% if weekly_read.body_composition.latest_fat_mass_kg is not none %}{{ '%.1f' | format(weekly_read.body_composition.latest_fat_mass_kg) }} kg{% else %}Unknown{% endif %}</dd></div>
+                <div><dt>Lean mass</dt><dd>{% if weekly_read.body_composition.latest_lean_mass_kg is not none %}{{ '%.1f' | format(weekly_read.body_composition.latest_lean_mass_kg) }} kg{% else %}Unknown{% endif %}</dd></div>
+              </dl>
+              <p class="field-hint">Smart-scale body composition gives a directional trend, not an exact measurement.</p>
+            </article>
+            <article class="panel compact-panel">
+              <p class="eyebrow">Waist</p>
+              <dl class="definition-list">
+                <div><dt>Latest</dt><dd>{% if weekly_read.waist.latest_waist_cm is not none %}{{ '%.1f' | format(weekly_read.waist.latest_waist_cm) }} cm{% else %}Unknown{% endif %}</dd></div>
+                <div><dt>Previous</dt><dd>{% if weekly_read.waist.previous_waist_cm is not none %}{{ '%.1f' | format(weekly_read.waist.previous_waist_cm) }} cm{% else %}Unknown{% endif %}</dd></div>
+                <div><dt>Change</dt><dd>{% if weekly_read.waist.change_cm is not none %}{% if weekly_read.waist.change_cm > 0 %}+{% endif %}{{ '%.1f' | format(weekly_read.waist.change_cm) }} cm{% else %}Unknown{% endif %}</dd></div>
+              </dl>
+            </article>
+          </div>
+        </section>
+
+        <section class="metric-section">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Training evidence</p>
+              <h2>What happened during the week</h2>
+            </div>
+          </div>
+          <div class="metric-grid metric-grid-training">
+            <article class="metric-card"><span>Runs</span><strong>{{ weekly_read.training.runs_completed }}</strong></article>
+            <article class="metric-card"><span>Strength</span><strong>{{ weekly_read.training.strength_sessions_completed }}</strong></article>
+            <article class="metric-card"><span>Swims</span><strong>{{ weekly_read.training.swims_completed }}</strong></article>
+            <article class="metric-card"><span>Walks and hikes</span><strong>{{ weekly_read.training.walks_hikes_completed }}</strong></article>
+            <article class="metric-card metric-card-strong"><span>Running distance</span><strong>{% if weekly_read.training.total_running_distance_meters is not none %}{{ '%.1f' | format(weekly_read.training.total_running_distance_meters / 1000) }} km{% else %}Unknown{% endif %}</strong></article>
+            <article class="metric-card"><span>Total activity time</span><strong>{% if weekly_read.training.total_activity_time_seconds is not none %}{{ '%.1f' | format(weekly_read.training.total_activity_time_seconds / 3600) }} hr{% else %}Unknown{% endif %}</strong></article>
+            <article class="metric-card"><span>Long run or hike</span><strong>{% if weekly_read.training.long_run_or_hike_done %}Yes{% else %}No{% endif %}</strong><small>Run: 75 min or 10 km. Hike: 90 min.</small></article>
+          </div>
+
+          <article class="panel activity-panel">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">Traceability</p>
+                <h2>Activities behind the totals</h2>
+              </div>
+            </div>
+            {% if weekly_read.activities %}
+              <ol class="activity-table">
+                {% for activity in weekly_read.activities %}
+                  <li>
+                    <time>{{ activity.recorded_on.strftime('%a %d %b') }}</time>
+                    <span>{{ activity.activity_type.value | replace('_', ' ') }}</span>
+                    <strong>{{ activity.name or 'Garmin activity' }}</strong>
+                    <span>{% if activity.duration_seconds is not none %}{{ (activity.duration_seconds / 60) | round | int }} min{% else %}Time unknown{% endif %}</span>
+                    <span>{% if activity.distance_meters is not none %}{{ '%.1f' | format(activity.distance_meters / 1000) }} km{% else %}Distance unknown{% endif %}</span>
+                  </li>
+                {% endfor %}
+              </ol>
+            {% else %}
+              <div class="empty-state"><p>No activities were recorded for this completed week.</p></div>
+            {% endif %}
+          </article>
+        </section>
+
+        <section class="metric-section">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Recovery evidence</p>
+              <h2>Signals, with their limits visible</h2>
+            </div>
+          </div>
+          <div class="metric-grid">
+            <article class="metric-card"><span>Average sleep</span><strong>{% if weekly_read.recovery.average_sleep_hours is not none %}{{ '%.1f' | format(weekly_read.recovery.average_sleep_hours) }} hr{% else %}Unknown{% endif %}</strong></article>
+            <article class="metric-card"><span>Average stress</span><strong>{% if weekly_read.recovery.average_stress_score is not none %}{{ '%.0f' | format(weekly_read.recovery.average_stress_score) }}{% else %}Unknown{% endif %}</strong></article>
+            <article class="metric-card"><span>Latest resting HR</span><strong>{% if weekly_read.recovery.latest_resting_hr is not none %}{{ '%.0f' | format(weekly_read.recovery.latest_resting_hr) }} bpm{% else %}Unknown{% endif %}</strong></article>
+            <article class="metric-card"><span>30-day resting HR</span><strong>{% if weekly_read.recovery.resting_hr_baseline_30d is not none %}{{ '%.1f' | format(weekly_read.recovery.resting_hr_baseline_30d) }} bpm{% else %}Unknown{% endif %}</strong></article>
+            <article class="metric-card"><span>Resting HR difference</span><strong>{% if weekly_read.recovery.resting_hr_vs_baseline_30d is not none %}{% if weekly_read.recovery.resting_hr_vs_baseline_30d > 0 %}+{% endif %}{{ '%.1f' | format(weekly_read.recovery.resting_hr_vs_baseline_30d) }} bpm{% else %}Unknown{% endif %}</strong></article>
+            <article class="metric-card"><span>Latest HRV</span><strong>{% if weekly_read.recovery.latest_hrv_value is not none %}{{ '%.0f' | format(weekly_read.recovery.latest_hrv_value) }}{% else %}Unknown{% endif %}</strong><small>{{ weekly_read.recovery.latest_hrv_status or 'Status unknown' }}</small></article>
+            <article class="metric-card"><span>Average Body Battery</span><strong>{% if weekly_read.recovery.average_body_battery is not none %}{{ '%.0f' | format(weekly_read.recovery.average_body_battery) }}{% else %}Unknown{% endif %}</strong></article>
+          </div>
+        </section>
+
+        <section class="coverage-section">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Coverage</p>
+              <h2>What Garmin supplied</h2>
+            </div>
+          </div>
+          <div class="coverage-grid">
+            {% for item in weekly_read.coverage %}
+              <article>
+                <strong>{{ item.observed_days }}/{{ item.expected_days }}</strong>
+                <span>{{ item.label }}</span>
+              </article>
+            {% endfor %}
+          </div>
+          <p class="field-hint coverage-note">A missing value stays unknown. Ready does not turn it into zero.</p>
+        </section>
+
+        <details class="optional-context-panel">
+          <summary>Optional context for this week</summary>
+          <div class="metric-grid">
+            <article class="metric-card"><span>Alcohol</span><strong>{% if weekly_read.optional_context.alcohol_units is not none %}{{ '%.1f' | format(weekly_read.optional_context.alcohol_units) }} units{% else %}Unknown{% endif %}</strong></article>
+            <article class="metric-card"><span>Average calories</span><strong>{% if weekly_read.optional_context.average_calories is not none %}{{ '%.0f' | format(weekly_read.optional_context.average_calories) }} kcal{% else %}Unknown{% endif %}</strong></article>
+            <article class="metric-card"><span>Average protein</span><strong>{% if weekly_read.optional_context.average_protein_g is not none %}{{ '%.0f' | format(weekly_read.optional_context.average_protein_g) }} g{% else %}Unknown{% endif %}</strong></article>
+          </div>
+          {% if weekly_read.optional_context.notes %}
+            <ol class="evidence-list context-notes">
+              {% for note in weekly_read.optional_context.notes %}
+                <li><span class="evidence-date">{{ note.recorded_on.strftime('%d %b') }}</span><span class="evidence-kind">Context</span><strong>{{ note.note }}</strong></li>
+              {% endfor %}
+            </ol>
+          {% endif %}
+        </details>
+      </main>
+    </div>
+  </body>
+</html>

@@ -52,6 +52,27 @@ stalled Garmin request from running without a bound.
 Issue #24 tracks official Garmin approval and the supported multi-user integration.
 The private token bridge must not expand beyond the owner account.
 
+## Weekly evidence parity
+
+Ready calculates the last fully completed Monday-to-Sunday period from its
+connector-neutral evidence tables. The weekly service owns four concerns:
+
+1. Merge imported and manual evidence without counting a measurement twice.
+2. Calculate WL-compatible weight, body-composition, waist, activity and recovery
+   measures.
+3. Show the evidence coverage behind each value and preserve missing data as
+   unknown.
+4. Translate the current weight direction and recovery thresholds into Ready's
+   neutral four-state vocabulary.
+
+Hosted history import covers 42 days in persisted batches of no more than seven
+days. Completed connector-sync intervals define backfill progress. A failed or
+interrupted interval cannot claim coverage, and an idempotent retry can safely
+write the same observations and activities again.
+
+The weekly read remains deterministic. Issue #8 will add planned-versus-completed
+work, and issue #9 will add one user-confirmed, cached AI interpretation.
+
 ## Private owner and deployment boundary
 
 `app.py` exports the FastAPI application for Vercel discovery. Production fails
@@ -115,6 +136,6 @@ Missing optional context must never force `Building a picture`. That state shoul
 
 ## Immediate follow-on
 
-The next slice should bring the deterministic weekly calculations and report inputs
-across from WL. Calendar plan comparison and the confirmed weekly review can then
-consume the hosted Garmin evidence rather than a local report.
+Calendar plan comparison can now consume the hosted weekly evidence rather than a
+local report. Editable goals should follow the accepted issue order after the
+owner confirms the Ready and WL weekly values match on one completed live week.

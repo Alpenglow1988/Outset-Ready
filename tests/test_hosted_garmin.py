@@ -188,3 +188,19 @@ def test_disconnect_removes_token_but_keeps_sync_history(settings):
         assert fetch_connector_connection(conn, connector="garmin") is None
         assert load_connector_credentials(conn, connector="garmin") is None
         assert fetch_latest_connector_sync(conn, "garmin") is not None
+
+
+def test_hosted_sync_accepts_a_bounded_history_window(settings):
+    HostedFixtureClient.instances.clear()
+    save_uploaded_token(settings, user_id="owner", token_payload=ORIGINAL_TOKEN)
+
+    stats = sync_hosted_garmin(
+        settings,
+        user_id="owner",
+        days=7,
+        end_date=date(2026, 8, 30),
+        client_factory=HostedFixtureClient,
+    )
+
+    assert stats.start_date == date(2026, 8, 24)
+    assert stats.end_date == date(2026, 8, 30)

@@ -20,6 +20,9 @@ from outset_ready.storage import (
     ensure_owner,
     init_db,
     list_goals,
+    list_activities_between,
+    list_daily_observations_between,
+    list_evidence_between,
     list_recent_activities,
     list_recent_evidence,
     upsert_activity,
@@ -79,4 +82,25 @@ def test_postgres_implements_the_ready_storage_contract():
         assert len(list_recent_activities(conn)) == 1
         assert count_evidence_days(conn) == 2
         assert list_recent_evidence(conn, user_id="other") == []
+        assert len(
+            list_evidence_between(
+                conn,
+                start_date=date(2026, 9, 1),
+                end_date=date(2026, 9, 3),
+            )
+        ) == 1
+        assert len(
+            list_daily_observations_between(
+                conn,
+                start_date=date(2026, 9, 1),
+                end_date=date(2026, 9, 3),
+            )
+        ) == 1
+        assert len(
+            list_activities_between(
+                conn,
+                start_date=date(2026, 9, 1),
+                end_date=date(2026, 9, 3),
+            )
+        ) == 1
     assert database_is_ready(POSTGRES_URL)

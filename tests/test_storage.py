@@ -6,6 +6,7 @@ import pytest
 from outset_ready.domain import (
     ActivityRecord,
     ActivityType,
+    ConnectorSyncStatus,
     DailyObservation,
     EvidenceKind,
     EvidenceSource,
@@ -20,7 +21,13 @@ from outset_ready.storage import (
     delete_connector_connection,
     ensure_owner,
     fetch_connector_connection,
+    finish_connector_sync,
     init_db,
+    list_activities_between,
+    list_connector_syncs,
+    list_daily_observations_between,
+    list_evidence_between,
+    list_latest_evidence_of_kind,
     list_goals,
     list_recent_evidence,
     load_connector_credentials,
@@ -69,6 +76,74 @@ def test_manual_evidence_keeps_optional_context_optional(tmp_path):
     assert evidence == [record]
     assert record.unit == "kg"
     assert record.note is None
+
+
+def test_period_queries_keep_owner_data_scoped_and_ordered(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        add_manual_evidence(
+            conn,
+            recorded_on=date(2026, 9, 2),
+            kind=EvidenceKind.WAIST_CM,
+            value=102,
+        )
+        add_manual_evidence(
+            conn,
+            recorded_on=date(2026, 9, 3),
+            kind=EvidenceKind.WAIST_CM,
+            value=101,
+        )
+        add_manual_evidence(
+            conn,
+            recorded_on=date(2026, 9, 3),
+            kind=EvidenceKind.WAIST_CM,
+            value=100.5,
+        )
+        upsert_daily_observation(
+            conn,
+            DailyObservation(
+                recorded_on=date(2026, 9, 3),
+                source=EvidenceSource.GARMIN,
+                weight_kg=91.4,
+            ),
+        )
+        upsert_activity(
+            conn,
+            ActivityRecord(
+                source=EvidenceSource.GARMIN,
+                external_id="run-1",
+                recorded_on=date(2026, 9, 3),
+                activity_type=ActivityType.RUN,
+            ),
+        )
+
+        evidence = list_evidence_between(
+            conn,
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 3),
+        )
+        waist = list_latest_evidence_of_kind(
+            conn,
+            kind=EvidenceKind.WAIST_CM,
+            through_date=date(2026, 9, 3),
+        )
+        observations = list_daily_observations_between(
+            conn,
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 3),
+        )
+        activities = list_activities_between(
+            conn,
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 3),
+        )
+
+    assert [record.value for record in evidence] == [102, 100.5, 101]
+    assert [record.value for record in waist] == [100.5, 102]
+    assert observations[0].weight_kg == 91.4
+    assert activities[0].external_id == "run-1"
 
 
 def test_context_note_requires_text(tmp_path):
@@ -328,3 +403,30 @@ def test_connector_allows_one_running_sync_and_recovers_stale_record(tmp_path):
     assert second_id != first_id
     assert first["status"] == "failed"
     assert first["error_message"] == "Previous Garmin sync did not finish."
+
+
+def test_connector_sync_history_returns_completed_windows(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        sync_id = start_connector_sync(
+            conn,
+            connector="garmin",
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 7),
+        )
+        finish_connector_sync(
+            conn,
+            sync_id,
+            status=ConnectorSyncStatus.COMPLETED_WITH_WARNINGS,
+            daily_records=7,
+            activity_records=3,
+            warnings=1,
+        )
+        syncs = list_connector_syncs(conn, "garmin")
+
+    assert len(syncs) == 1
+    assert syncs[0].start_date == date(2026, 9, 1)
+    assert syncs[0].end_date == date(2026, 9, 7)
+    assert syncs[0].warnings == 1
