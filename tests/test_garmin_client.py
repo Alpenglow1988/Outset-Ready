@@ -82,6 +82,59 @@ def test_activity_pagination_stops_at_date_and_deduplicates(monkeypatch, tmp_pat
     assert [item["activityId"] for item in activities] == [1, 2, 3]
 
 
+def test_scheduled_workouts_span_months_filter_window_and_deduplicate(
+    monkeypatch, tmp_path
+):
+    calls = []
+    duplicate = {
+        "id": 2,
+        "calendarItemType": "WORKOUT",
+        "date": "2026-09-01",
+        "workoutId": 102,
+    }
+
+    class FakeGarmin:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def login(self, tokenstore=None):
+            pass
+
+        def get_scheduled_workouts(self, year, month):
+            calls.append((year, month))
+            return {
+                8: {
+                    "calendarItems": [
+                        {
+                            "id": 1,
+                            "calendarItemType": "WORKOUT",
+                            "date": "2026-08-31",
+                            "workoutId": 101,
+                        },
+                        duplicate,
+                        {
+                            "id": 9,
+                            "calendarItemType": "WORKOUT",
+                            "date": "2026-08-20",
+                            "workoutId": 109,
+                        },
+                    ]
+                },
+                9: {"calendarItems": [duplicate]},
+            }[month]
+
+    monkeypatch.setattr("outset_ready.connectors.garmin.client.Garmin", FakeGarmin)
+    client = GarminClient(settings(tmp_path))
+    client.login()
+
+    workouts = client.fetch_scheduled_workouts(
+        date(2026, 8, 30), date(2026, 9, 2)
+    )
+
+    assert calls == [(2026, 8), (2026, 9)]
+    assert [item["id"] for item in workouts] == [1, 2]
+
+
 def test_missing_optional_endpoint_has_specific_error(monkeypatch, tmp_path):
     class FakeGarmin:
         def __init__(self, *_args, **_kwargs):

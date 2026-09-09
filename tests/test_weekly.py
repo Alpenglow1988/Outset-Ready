@@ -13,6 +13,11 @@ from outset_ready.domain import (
     EvidenceRecord,
     EvidenceSource,
 )
+from outset_ready.plans import (
+    create_manual_session,
+    match_planned_session,
+    skip_planned_session,
+)
 from outset_ready.readiness import ReadinessState
 from outset_ready.storage import (
     add_manual_evidence,
@@ -174,6 +179,71 @@ def test_recovery_concern_uses_neutral_review_state():
 
     assert assessment.state is ReadinessState.REVIEW_THE_PLAN
     assert "recovery" in assessment.summary.lower()
+
+
+def test_completed_plan_with_explicit_skip_can_still_be_progressing(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        _insert_daily_history(conn)
+        _insert_activities(conn)
+        run = create_manual_session(
+            conn,
+            scheduled_on=PERIOD_START,
+            activity_type=ActivityType.RUN,
+            title="Easy run",
+        )
+        strength = create_manual_session(
+            conn,
+            scheduled_on=PERIOD_START + timedelta(days=1),
+            activity_type=ActivityType.STRENGTH,
+            title="Strength",
+        )
+        match_planned_session(
+            conn,
+            session_id=run.id,
+            activity_source=EvidenceSource.GARMIN,
+            activity_external_id="run-1",
+        )
+        skip_planned_session(conn, session_id=strength.id)
+        weekly = build_weekly_read(
+            conn,
+            period_start=PERIOD_START,
+            period_end=PERIOD_END,
+        )
+
+    assert weekly.plan.completed_sessions == 1
+    assert weekly.plan.planned_sessions == 1
+    assert weekly.plan.skipped_sessions == 1
+    assert weekly.assessment.state is ReadinessState.PROGRESSING
+
+
+def test_low_plan_follow_through_uses_review_state(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        _insert_daily_history(conn)
+        for offset, activity_type in enumerate(
+            (ActivityType.RUN, ActivityType.STRENGTH, ActivityType.RUN)
+        ):
+            create_manual_session(
+                conn,
+                scheduled_on=PERIOD_START + timedelta(days=offset),
+                activity_type=activity_type,
+                title=f"Planned {activity_type.value}",
+            )
+        weekly = build_weekly_read(
+            conn,
+            period_start=PERIOD_START,
+            period_end=PERIOD_END,
+        )
+
+    assert weekly.plan.completed_sessions == 0
+    assert weekly.plan.planned_sessions == 3
+    assert weekly.assessment.state is ReadinessState.REVIEW_THE_PLAN
+    assert "weekly plan" in weekly.assessment.summary.lower()
 
 
 def _insert_daily_history(conn) -> None:

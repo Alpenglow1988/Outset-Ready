@@ -8,6 +8,7 @@ from outset_ready.connectors.garmin.client import GarminAuthenticationRequiredEr
 from outset_ready.connectors.garmin.hosted import (
     GarminConnectionUnavailable,
     disconnect_hosted_garmin,
+    import_hosted_garmin_plan,
     save_uploaded_token,
     sync_hosted_garmin,
 )
@@ -21,6 +22,7 @@ from outset_ready.storage import (
     init_db,
     load_connector_credentials,
 )
+from outset_ready.plans import list_planned_sessions
 
 
 ORIGINAL_TOKEN = json.dumps(
@@ -83,6 +85,18 @@ class HostedFixtureClient:
 
     def fetch_activities_since(self, _start_date, *, page_size):
         return []
+
+    def fetch_scheduled_workouts(self, start_date, _end_date):
+        return [
+            {
+                "id": 72001,
+                "calendarItemType": "WORKOUT",
+                "date": start_date.isoformat(),
+                "workoutId": 81001,
+                "workoutName": "Easy run",
+                "sportType": {"sportTypeKey": "running"},
+            }
+        ]
 
 
 def test_uploaded_token_is_encrypted_and_hosted_sync_rotates_it(settings):
@@ -204,3 +218,57 @@ def test_hosted_sync_accepts_a_bounded_history_window(settings):
 
     assert stats.start_date == date(2026, 8, 24)
     assert stats.end_date == date(2026, 8, 30)
+
+
+def test_hosted_plan_import_persists_snapshot_and_rotates_token(settings):
+    HostedFixtureClient.instances.clear()
+    save_uploaded_token(settings, user_id="owner", token_payload=ORIGINAL_TOKEN)
+
+    stats = import_hosted_garmin_plan(
+        settings,
+        user_id="owner",
+        start_date=date(2026, 9, 7),
+        end_date=date(2026, 9, 13),
+        client_factory=HostedFixtureClient,
+    )
+
+    assert stats.scheduled_records == 1
+    assert stats.automatic_matches == 0
+    assert HostedFixtureClient.instances[0].received_token is not None
+    with connect(settings.database_target) as conn:
+        sessions = list_planned_sessions(
+            conn,
+            start_date=date(2026, 9, 7),
+            end_date=date(2026, 9, 13),
+        )
+        rotated = load_connector_credentials(conn, connector="garmin")
+    assert [session.title for session in sessions] == ["Easy run"]
+    assert rotated is not None
+    assert "updated-refresh" in CredentialCipher(
+        settings.credential_encryption_key
+    ).decrypt(rotated)
+
+
+def test_hosted_plan_auth_failure_marks_connection_for_reconnect(settings):
+    save_uploaded_token(settings, user_id="owner", token_payload=ORIGINAL_TOKEN)
+
+    class RejectingPlanClient:
+        def __init__(self, _settings):
+            pass
+
+        def login(self, prompt_mfa=None, *, token_bundle=None):
+            raise GarminAuthenticationRequiredError("rejected")
+
+    with pytest.raises(GarminAuthenticationRequiredError):
+        import_hosted_garmin_plan(
+            settings,
+            user_id="owner",
+            start_date=date(2026, 9, 7),
+            end_date=date(2026, 9, 13),
+            client_factory=RejectingPlanClient,
+        )
+
+    with connect(settings.database_target) as conn:
+        connection = fetch_connector_connection(conn, connector="garmin")
+    assert connection is not None
+    assert connection.status is ConnectorConnectionStatus.RECONNECT_REQUIRED

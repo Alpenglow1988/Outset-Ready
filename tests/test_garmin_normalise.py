@@ -6,6 +6,7 @@ from outset_ready.connectors.garmin.normalise import (
     map_activity_type,
     normalise_activity,
     normalise_daily_observation,
+    normalise_scheduled_workout,
 )
 from outset_ready.domain import ActivityType, EvidenceSource
 
@@ -69,3 +70,41 @@ def test_activity_type_contract_maps_supported_categories():
     assert map_activity_type("yoga") is ActivityType.MOBILITY_OR_YOGA
     assert map_activity_type("unknown_new_type") is ActivityType.OTHER
 
+
+def test_scheduled_workout_contract_normalises_supported_calendar_items():
+    fixture = load_fixture("garmin_scheduled_workouts.json")
+
+    run = normalise_scheduled_workout(fixture["calendarItems"][0])
+    strength = normalise_scheduled_workout(fixture["calendarItems"][1])
+
+    assert run is not None
+    assert run.external_id == "calendar:72001"
+    assert run.scheduled_on == date(2026, 9, 9)
+    assert run.activity_type is ActivityType.RUN
+    assert run.planned_duration_seconds == 2700
+    assert run.planned_distance_meters == 7000
+    assert strength is not None
+    assert strength.activity_type is ActivityType.STRENGTH
+
+
+def test_scheduled_workout_contract_ignores_non_workout_calendar_items():
+    fixture = load_fixture("garmin_scheduled_workouts.json")
+
+    assert normalise_scheduled_workout(fixture["calendarItems"][2]) is None
+
+
+def test_calendar_identity_stays_stable_when_provider_moves_workout():
+    original = {
+        "id": 72001,
+        "calendarItemType": "WORKOUT",
+        "date": "2026-09-09",
+        "workoutId": 81001,
+    }
+    moved = {**original, "date": "2026-09-10"}
+
+    first = normalise_scheduled_workout(original)
+    second = normalise_scheduled_workout(moved)
+
+    assert first is not None and second is not None
+    assert first.external_id == second.external_id == "calendar:72001"
+    assert first.scheduled_on != second.scheduled_on

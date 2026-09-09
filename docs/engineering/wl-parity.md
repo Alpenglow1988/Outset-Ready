@@ -20,7 +20,7 @@ calculation contract without copying personal Garmin data.
 | Recovery | Weekly sleep and stress averages, latest HRV, resting heart rate against a 30-day baseline | Same, with Body Battery coverage added | Parity plus visible evidence |
 | Manual overlap | Separate manual-note model | A same-day manual weight or sleep value overrides the imported value | Intentional source rule |
 | Missing optional context | Absent values omitted from calculations | Absent values remain unknown | Exact semantic parity |
-| Training verdict | Fixed run, strength and long-session expectations | Metrics only until Ready stores the user's actual plan | Intentional product boundary, tracked by #8 |
+| Training verdict | Fixed run, strength and long-session expectations | Compares completed activity with the latest intentional imported or manual plan; explicit skips stay visible but do not count as misses | Intentional Ready plan model |
 | Status language | `ON_TRACK`, `WATCH`, `OFF_TRACK` and related states | Progressing, Mixed signals, Review the plan, Building a picture | Intentional product decision |
 | Target projections | Projects dates from one weekly rate | Omitted from the weekly read | Intentional guardrail against false precision |
 | Raw hosted payloads | WL retains local JSON | Ready stores normalised records and sync metadata only | Intentional privacy and serverless boundary |

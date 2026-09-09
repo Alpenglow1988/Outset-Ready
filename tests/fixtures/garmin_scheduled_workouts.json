@@ -1,0 +1,29 @@
+{
+  "calendarItems": [
+    {
+      "id": 72001,
+      "calendarItemType": "WORKOUT",
+      "date": "2026-09-09",
+      "workoutId": 81001,
+      "workoutName": "Easy run",
+      "sportType": {"sportTypeKey": "running"},
+      "durationSeconds": 2700,
+      "distanceMeters": 7000
+    },
+    {
+      "calendarItemId": 72002,
+      "calendarItemType": "WORKOUT",
+      "calendarDate": "2026-09-11",
+      "workoutId": 81002,
+      "workoutName": "Strength session",
+      "sportType": {"sportTypeName": "strength_training"},
+      "estimatedDurationInSecs": 2400
+    },
+    {
+      "id": 72003,
+      "calendarItemType": "EVENT",
+      "date": "2026-09-12",
+      "title": "Local race"
+    }
+  ]
+}

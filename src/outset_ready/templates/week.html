@@ -16,6 +16,7 @@
         </a>
         <nav aria-label="Main navigation">
           <a class="nav-link" href="/">Overview</a>
+          <a class="nav-link" href="/week/current">Week in progress</a>
           <a class="nav-link active" href="/week">Weekly read</a>
           <a class="nav-link" href="/goals">Goals</a>
           <span class="nav-link disabled">Events</span>
@@ -128,6 +129,26 @@
             <article class="metric-card"><span>Total activity time</span><strong>{% if weekly_read.training.total_activity_time_seconds is not none %}{{ '%.1f' | format(weekly_read.training.total_activity_time_seconds / 3600) }} hr{% else %}Unknown{% endif %}</strong></article>
             <article class="metric-card"><span>Long run or hike</span><strong>{% if weekly_read.training.long_run_or_hike_done %}Yes{% else %}No{% endif %}</strong><small>Run: 75 min or 10 km. Hike: 90 min.</small></article>
           </div>
+
+          <article class="panel plan-follow-through-panel">
+            <div class="section-heading compact">
+              <div>
+                <p class="eyebrow">Plan follow-through</p>
+                <h2>What the completed work matched</h2>
+              </div>
+              <a class="quiet-button text-link" href="/week/current">Open current week</a>
+            </div>
+            {% if weekly_read.plan.sessions %}
+              <div class="plan-follow-through-summary">
+                <p><strong>{{ weekly_read.plan.completed_sessions }}</strong><span>matched complete</span></p>
+                <p><strong>{{ weekly_read.plan.planned_sessions }}</strong><span>active planned</span></p>
+                <p><strong>{{ weekly_read.plan.skipped_sessions }}</strong><span>explicitly skipped</span></p>
+              </div>
+              <p class="field-hint">Explicitly skipped sessions remain visible but do not count as missed work.</p>
+            {% else %}
+              <div class="empty-state"><p>No planned sessions were recorded for this completed week.</p></div>
+            {% endif %}
+          </article>
 
           <article class="panel activity-panel">
             <div class="section-heading compact">

@@ -8,7 +8,7 @@ Ready starts with the user’s goal, gathers evidence from Garmin or manual entr
 
 ## Current status
 
-The first seven application slices now provide a private, durable owner workspace:
+The first eight application slices now provide a private, durable owner workspace:
 
 - A desktop-first, responsive dashboard.
 - An editable health, fitness and adventure goal stack in SQLite or Postgres.
@@ -32,9 +32,16 @@ The first seven application slices now provide a private, durable owner workspac
 - WL-parity weight, waist, activity and recovery calculations.
 - Per-metric coverage so missing Garmin values remain visible and unknown.
 - Pending states that disable slow forms and protect against duplicate submissions.
+- A live Monday-to-Sunday Week in Progress workspace without daily judgement.
+- Garmin Calendar planned-workout import behind the existing encrypted connection.
+- Manual planned sessions when the plan lives outside Garmin.
+- Immutable provider snapshots and append-only plan revision history.
+- Owner-recorded moves, replacements, reductions, skips and restores, with optional reasons.
+- Conservative automatic activity matching and manual resolution when a match is ambiguous.
+- Completed-week plan follow-through, with explicit skips excluded from the completion denominator.
 
-Ready now covers WL's deterministic weekly evidence layer. Planned-versus-completed
-work and confirmed AI interpretation remain later, separate product slices.
+Ready now covers WL's deterministic weekly evidence and planned-versus-completed
+layers. Confirmed AI interpretation remains a later, separate product slice.
 
 Open `Goals` to create, edit or archive a goal. Ready keeps exactly one active
 current priority. To replace it, edit another goal and choose `Current`; Ready
@@ -119,6 +126,13 @@ until Ready shows 42 of 42 checked days. Ready runs one persisted batch per requ
 so an interrupted import resumes without repeating completed intervals. Open
 `Weekly read` after the history import to inspect the last completed Monday-to-Sunday
 period and the evidence behind each total.
+
+Open `Week in progress`, then select `Refresh Garmin plan` to snapshot the current
+Monday-to-Sunday Garmin Calendar plan. Imported workouts and manual sessions can be
+moved, replaced, shortened, skipped or restored without erasing what the provider
+originally supplied. Ready only auto-matches a completed activity when exactly one
+same-day, same-type candidate exists; use the match control when the choice is
+ambiguous.
 
 Ready encrypts the reusable token bundle before storing it in Postgres. Each hosted
 sync saves any refreshed token material back to Postgres. Garmin passwords remain

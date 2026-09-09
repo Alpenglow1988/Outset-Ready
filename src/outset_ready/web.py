@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from urllib.parse import quote
 
@@ -18,6 +18,7 @@ from outset_ready.connectors.garmin.client import (
 from outset_ready.connectors.garmin.hosted import (
     GarminConnectionUnavailable,
     disconnect_hosted_garmin,
+    import_hosted_garmin_plan,
     save_uploaded_token,
     sync_hosted_garmin,
 )
@@ -26,13 +27,29 @@ from outset_ready.connectors.garmin.tokens import (
     GarminTokenBundleError,
 )
 from outset_ready.domain import (
+    ActivityType,
     EvidenceKind,
+    EvidenceSource,
     GoalCategory,
     GoalPriority,
     OPTIONAL_CONTEXT_KINDS,
+    PlanChangeReason,
+    PlanChangeType,
+    PlannedSessionStatus,
 )
 from outset_ready.history import calculate_history_progress
-from outset_ready.periods import last_completed_training_week
+from outset_ready.periods import current_training_week, last_completed_training_week
+from outset_ready.plans import (
+    auto_match_planned_sessions,
+    build_plan_week,
+    create_manual_session,
+    fetch_planned_session,
+    match_planned_session,
+    restore_planned_session,
+    skip_planned_session,
+    unmatch_planned_session,
+    update_planned_session,
+)
 from outset_ready.settings import AppSettings, load_app_settings
 from outset_ready.session import SignedSessionMiddleware
 from outset_ready.storage import (
@@ -83,7 +100,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
         )
         yield
 
-    app = FastAPI(title="Outset Ready", version="0.5.0", lifespan=lifespan)
+    app = FastAPI(title="Outset Ready", version="0.6.0", lifespan=lifespan)
     app.state.settings = settings
     app.add_middleware(
         SignedSessionMiddleware,
@@ -351,6 +368,368 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
             return render_goals(request, error=str(exc), status_code=400)
         return RedirectResponse(
             url="/goals?notice=archived",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    def render_current_week(
+        request: Request,
+        *,
+        notice: str | None = None,
+        error: str | None = None,
+        status_code: int = 200,
+    ):
+        user_id = _require_owner(request, settings)
+        today = date.today()
+        period_start, period_end = current_training_week(today)
+        with connect(settings.database_target) as conn:
+            plan = build_plan_week(
+                conn,
+                period_start=period_start,
+                period_end=period_end,
+                user_id=user_id,
+            )
+            garmin_connection = fetch_connector_connection(
+                conn,
+                connector="garmin",
+                user_id=user_id,
+            )
+        all_activities = {
+            (activity.source.value, activity.external_id): activity
+            for activity in plan.unmatched_activities
+        }
+        for row in plan.sessions:
+            if row.matched_activity is not None:
+                activity = row.matched_activity
+                all_activities[(activity.source.value, activity.external_id)] = activity
+        days = []
+        for offset in range(7):
+            day = period_start + timedelta(days=offset)
+            days.append(
+                {
+                    "date": day,
+                    "sessions": tuple(
+                        row for row in plan.sessions if row.session.scheduled_on == day
+                    ),
+                    "activities": tuple(
+                        sorted(
+                            (
+                                activity
+                                for activity in all_activities.values()
+                                if activity.recorded_on == day
+                            ),
+                            key=lambda activity: (
+                                activity.activity_type.value,
+                                activity.name or "",
+                                activity.external_id,
+                            ),
+                        )
+                    ),
+                }
+            )
+        session_titles = {
+            row.session.id: row.session.title for row in plan.sessions
+        }
+        revision_entries = tuple(
+            (revision, session_titles.get(revision.planned_session_id, "Planned session"))
+            for revision in plan.revisions
+        )
+        return templates.TemplateResponse(
+            request=request,
+            name="week_in_progress.html",
+            context={
+                "plan": plan,
+                "days": days,
+                "revision_entries": revision_entries,
+                "adjusted_sessions": plan.skipped_sessions
+                + sum(
+                    row.session.status is PlannedSessionStatus.REMOVED
+                    for row in plan.sessions
+                ),
+                "due_unmatched": plan.due_unmatched_sessions(
+                    through_date=min(today - timedelta(days=1), period_end)
+                ),
+                "garmin_connection": garmin_connection,
+                "owner_email": settings.owner_email,
+                "csrf_token": _session_csrf_token(request),
+                "persistent_storage": settings.persistent_storage,
+                "activity_types": ActivityType,
+                "plan_change_types": (
+                    PlanChangeType.EDITED,
+                    PlanChangeType.MOVED,
+                    PlanChangeType.REPLACED,
+                    PlanChangeType.SHORTENED,
+                ),
+                "plan_change_reasons": PlanChangeReason,
+                "today": today,
+                "notice": notice,
+                "error": error,
+            },
+            status_code=status_code,
+        )
+
+    @app.get("/week/current")
+    def current_week_page(request: Request, notice: str | None = None):
+        notices = {
+            "garmin-plan-refreshed": "Garmin Calendar plan refreshed for this week.",
+            "session-added": "Planned session added.",
+            "session-updated": "Planned session change recorded.",
+            "session-skipped": "Session marked as skipped and kept in the week history.",
+            "session-restored": "Session restored to the active plan.",
+            "activity-matched": "Completed activity matched to the planned session.",
+            "activity-unmatched": "Activity match removed.",
+        }
+        return render_current_week(request, notice=notices.get(notice or ""))
+
+    @app.post("/week/current/garmin")
+    def refresh_current_week_garmin(
+        request: Request,
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        period_start, period_end = current_training_week(date.today())
+        try:
+            import_hosted_garmin_plan(
+                settings,
+                user_id=user_id,
+                start_date=period_start,
+                end_date=period_end,
+            )
+        except (GarminAuthenticationRequiredError, GarminConnectionUnavailable):
+            return render_current_week(
+                request,
+                error=(
+                    "Garmin requires a new token file. Existing plans and manual "
+                    "changes remain available."
+                ),
+                status_code=409,
+            )
+        except GarminConnectorError:
+            return render_current_week(
+                request,
+                error=(
+                    "Garmin Calendar could not be refreshed. The current saved plan "
+                    "and manual changes remain available."
+                ),
+                status_code=502,
+            )
+        return RedirectResponse(
+            url="/week/current?notice=garmin-plan-refreshed",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.post("/week/current/sessions")
+    def create_current_week_session(
+        request: Request,
+        scheduled_on: str = Form(...),
+        activity_type: str = Form(...),
+        title: str = Form(...),
+        duration_minutes: str = Form(""),
+        distance_km: str = Form(""),
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        try:
+            fields = _parse_planned_session_fields(
+                scheduled_on=scheduled_on,
+                activity_type=activity_type,
+                title=title,
+                duration_minutes=duration_minutes,
+                distance_km=distance_km,
+            )
+            _require_current_week_date(fields["scheduled_on"])
+            with connect(settings.database_target) as conn:
+                create_manual_session(conn, user_id=user_id, **fields)
+                period_start, period_end = current_training_week(date.today())
+                auto_match_planned_sessions(
+                    conn,
+                    start_date=period_start,
+                    end_date=period_end,
+                    user_id=user_id,
+                )
+        except ValueError as exc:
+            return render_current_week(request, error=str(exc), status_code=400)
+        return RedirectResponse(
+            url="/week/current?notice=session-added",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.post("/week/current/sessions/{session_id}")
+    def update_current_week_session(
+        request: Request,
+        session_id: str,
+        scheduled_on: str = Form(...),
+        activity_type: str = Form(...),
+        title: str = Form(...),
+        duration_minutes: str = Form(""),
+        distance_km: str = Form(""),
+        change_type: str = Form(...),
+        reason: str = Form(""),
+        reason_note: str = Form(""),
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        try:
+            fields = _parse_planned_session_fields(
+                scheduled_on=scheduled_on,
+                activity_type=activity_type,
+                title=title,
+                duration_minutes=duration_minutes,
+                distance_km=distance_km,
+            )
+            _require_current_week_date(fields["scheduled_on"])
+            parsed_change_type = PlanChangeType(change_type)
+            with connect(settings.database_target) as conn:
+                _require_current_week_session(
+                    conn,
+                    session_id=session_id,
+                    user_id=user_id,
+                )
+                update_planned_session(
+                    conn,
+                    session_id=session_id,
+                    change_type=parsed_change_type,
+                    reason=_parse_optional_plan_reason(reason),
+                    reason_note=reason_note,
+                    user_id=user_id,
+                    **fields,
+                )
+                period_start, period_end = current_training_week(date.today())
+                auto_match_planned_sessions(
+                    conn,
+                    start_date=period_start,
+                    end_date=period_end,
+                    user_id=user_id,
+                )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            return render_current_week(request, error=str(exc), status_code=400)
+        return RedirectResponse(
+            url="/week/current?notice=session-updated",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.post("/week/current/sessions/{session_id}/skip")
+    def skip_current_week_session(
+        request: Request,
+        session_id: str,
+        reason: str = Form(""),
+        reason_note: str = Form(""),
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        try:
+            with connect(settings.database_target) as conn:
+                _require_current_week_session(
+                    conn,
+                    session_id=session_id,
+                    user_id=user_id,
+                )
+                skip_planned_session(
+                    conn,
+                    session_id=session_id,
+                    reason=_parse_optional_plan_reason(reason),
+                    reason_note=reason_note,
+                    user_id=user_id,
+                )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            return render_current_week(request, error=str(exc), status_code=400)
+        return RedirectResponse(
+            url="/week/current?notice=session-skipped",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.post("/week/current/sessions/{session_id}/restore")
+    def restore_current_week_session(
+        request: Request,
+        session_id: str,
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        try:
+            with connect(settings.database_target) as conn:
+                _require_current_week_session(
+                    conn,
+                    session_id=session_id,
+                    user_id=user_id,
+                )
+                restore_planned_session(conn, session_id=session_id, user_id=user_id)
+                period_start, period_end = current_training_week(date.today())
+                auto_match_planned_sessions(
+                    conn,
+                    start_date=period_start,
+                    end_date=period_end,
+                    user_id=user_id,
+                )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            return render_current_week(request, error=str(exc), status_code=400)
+        return RedirectResponse(
+            url="/week/current?notice=session-restored",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.post("/week/current/sessions/{session_id}/match")
+    def match_current_week_session(
+        request: Request,
+        session_id: str,
+        activity_identity: str = Form(...),
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        try:
+            source, external_id = _parse_activity_identity(activity_identity)
+            with connect(settings.database_target) as conn:
+                _require_current_week_session(
+                    conn,
+                    session_id=session_id,
+                    user_id=user_id,
+                )
+                match_planned_session(
+                    conn,
+                    session_id=session_id,
+                    activity_source=source,
+                    activity_external_id=external_id,
+                    user_id=user_id,
+                )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            return render_current_week(request, error=str(exc), status_code=400)
+        return RedirectResponse(
+            url="/week/current?notice=activity-matched",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.post("/week/current/sessions/{session_id}/unmatch")
+    def unmatch_current_week_session(
+        request: Request,
+        session_id: str,
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        try:
+            with connect(settings.database_target) as conn:
+                _require_current_week_session(
+                    conn,
+                    session_id=session_id,
+                    user_id=user_id,
+                )
+                unmatch_planned_session(conn, session_id=session_id, user_id=user_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return RedirectResponse(
+            url="/week/current?notice=activity-unmatched",
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -728,3 +1107,67 @@ def _parse_goal_fields(
         "target_unit": target_unit,
         "target_date": parsed_target_date,
     }
+
+
+def _parse_planned_session_fields(
+    *,
+    scheduled_on: str,
+    activity_type: str,
+    title: str,
+    duration_minutes: str,
+    distance_km: str,
+) -> dict:
+    try:
+        parsed_date = date.fromisoformat(scheduled_on)
+    except ValueError as exc:
+        raise ValueError("Enter a valid session date.") from exc
+    try:
+        parsed_activity_type = ActivityType(activity_type)
+    except ValueError as exc:
+        raise ValueError("Choose a supported activity type.") from exc
+    try:
+        duration_seconds = (
+            float(duration_minutes) * 60 if duration_minutes.strip() else None
+        )
+        distance_meters = float(distance_km) * 1000 if distance_km.strip() else None
+    except ValueError as exc:
+        raise ValueError("Enter duration and distance as numbers.") from exc
+    return {
+        "scheduled_on": parsed_date,
+        "activity_type": parsed_activity_type,
+        "title": title,
+        "planned_duration_seconds": duration_seconds,
+        "planned_distance_meters": distance_meters,
+    }
+
+
+def _parse_optional_plan_reason(value: str) -> PlanChangeReason | None:
+    if not value.strip():
+        return None
+    try:
+        return PlanChangeReason(value)
+    except ValueError as exc:
+        raise ValueError("Choose a recognised change reason.") from exc
+
+
+def _parse_activity_identity(value: str) -> tuple[EvidenceSource, str]:
+    try:
+        raw_source, external_id = value.split("|", 1)
+        source = EvidenceSource(raw_source)
+    except (ValueError, AttributeError) as exc:
+        raise ValueError("Choose a completed activity to match.") from exc
+    if not external_id:
+        raise ValueError("Choose a completed activity to match.")
+    return source, external_id
+
+
+def _require_current_week_date(value: date) -> None:
+    period_start, period_end = current_training_week(date.today())
+    if not period_start <= value <= period_end:
+        raise ValueError("Keep this session inside the current Monday to Sunday week.")
+
+
+def _require_current_week_session(conn, *, session_id: str, user_id: str):
+    session = fetch_planned_session(conn, session_id=session_id, user_id=user_id)
+    _require_current_week_date(session.scheduled_on)
+    return session

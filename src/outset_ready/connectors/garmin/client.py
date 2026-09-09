@@ -4,7 +4,10 @@ from datetime import date
 from typing import Any, Callable
 
 from outset_ready.connectors.garmin.config import GarminSettings
-from outset_ready.connectors.garmin.normalise import extract_activity_date
+from outset_ready.connectors.garmin.normalise import (
+    extract_activity_date,
+    extract_scheduled_workout_date,
+)
 from outset_ready.connectors.garmin.tokens import normalise_token_bundle
 
 
@@ -156,6 +159,42 @@ class GarminClient:
 
         return activities
 
+    def fetch_scheduled_workouts(
+        self,
+        start_date: date,
+        end_date: date,
+    ) -> list[dict[str, Any]]:
+        if end_date < start_date:
+            raise ValueError("The plan end date cannot precede its start date.")
+
+        workouts: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        month = start_date.replace(day=1)
+        final_month = end_date.replace(day=1)
+        while month <= final_month:
+            response = self._call(
+                "get_scheduled_workouts",
+                "scheduled workouts",
+                month.year,
+                month.month,
+            )
+            for workout in _coerce_scheduled_workout_list(response):
+                scheduled_on = _scheduled_workout_date(workout)
+                if scheduled_on is None or not start_date <= scheduled_on <= end_date:
+                    continue
+                identity = _scheduled_workout_identity(workout, scheduled_on)
+                if identity in seen_ids:
+                    continue
+                seen_ids.add(identity)
+                workouts.append(workout)
+
+            month = (
+                date(month.year + 1, 1, 1)
+                if month.month == 12
+                else date(month.year, month.month + 1, 1)
+            )
+        return workouts
+
     def _call(self, method_name: str, endpoint_name: str, *args: Any, **kwargs: Any) -> Any:
         if self._client is None:
             raise GarminConnectorError("Garmin client is not logged in.")
@@ -205,6 +244,24 @@ def _coerce_activity_list(response: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _coerce_scheduled_workout_list(response: Any) -> list[dict[str, Any]]:
+    if isinstance(response, list):
+        return [item for item in response if isinstance(item, dict)]
+    if isinstance(response, dict):
+        for key in (
+            "calendarItems",
+            "scheduledWorkouts",
+            "workouts",
+            "items",
+            "data",
+            "results",
+        ):
+            value = response.get(key)
+            if isinstance(value, list):
+                return [item for item in value if isinstance(item, dict)]
+    return []
+
+
 def _activity_date(activity: dict[str, Any]) -> date | None:
     value = extract_activity_date(activity)
     if value is None:
@@ -221,6 +278,28 @@ def _activity_identity(activity: dict[str, Any]) -> str:
         if value is not None:
             return f"{key}:{value}"
     return repr(sorted(activity.items()))
+
+
+def _scheduled_workout_date(workout: dict[str, Any]) -> date | None:
+    value = extract_scheduled_workout_date(workout)
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _scheduled_workout_identity(workout: dict[str, Any], scheduled_on: date) -> str:
+    for key in ("scheduledWorkoutId", "calendarItemId", "calendarId", "id"):
+        value = workout.get(key)
+        if value is not None:
+            return f"{key}:{value}"
+    for key in ("workoutId", "workout_id"):
+        value = workout.get(key)
+        if value is not None:
+            return f"{key}:{value}:{scheduled_on.isoformat()}"
+    return f"fallback:{scheduled_on.isoformat()}:{repr(sorted(workout.items()))}"
 
 
 def _is_authentication_failure(exc: BaseException) -> bool:

@@ -172,6 +172,81 @@ SCHEMA_STATEMENTS = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS plan_snapshots (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      id TEXT PRIMARY KEY,
+      source TEXT NOT NULL CHECK (source IN ('garmin', 'manual')),
+      start_date TEXT NOT NULL,
+      end_date TEXT NOT NULL,
+      captured_at TEXT NOT NULL,
+      item_count INTEGER NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS plan_snapshot_sessions (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      snapshot_id TEXT NOT NULL,
+      external_id TEXT NOT NULL,
+      scheduled_on TEXT NOT NULL,
+      activity_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      planned_duration_seconds REAL,
+      planned_distance_meters REAL,
+      source_ref TEXT,
+      PRIMARY KEY (snapshot_id, external_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS planned_sessions (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      id TEXT NOT NULL,
+      source TEXT NOT NULL CHECK (source IN ('garmin', 'manual')),
+      external_id TEXT,
+      scheduled_on TEXT NOT NULL,
+      activity_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      planned_duration_seconds REAL,
+      planned_distance_meters REAL,
+      status TEXT NOT NULL CHECK (status IN ('planned', 'skipped', 'removed')),
+      manual_override INTEGER NOT NULL DEFAULT 0,
+      provider_fingerprint TEXT,
+      source_ref TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS planned_session_revisions (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      id TEXT PRIMARY KEY,
+      planned_session_id TEXT NOT NULL,
+      change_type TEXT NOT NULL,
+      actor TEXT NOT NULL CHECK (actor IN ('owner', 'garmin')),
+      scheduled_on TEXT NOT NULL,
+      activity_type TEXT NOT NULL,
+      title TEXT NOT NULL,
+      planned_duration_seconds REAL,
+      planned_distance_meters REAL,
+      status TEXT NOT NULL,
+      reason TEXT,
+      reason_note TEXT,
+      changed_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS planned_activity_matches (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      planned_session_id TEXT NOT NULL,
+      activity_source TEXT NOT NULL CHECK (activity_source IN ('garmin', 'manual')),
+      activity_external_id TEXT NOT NULL,
+      match_method TEXT NOT NULL CHECK (match_method IN ('automatic', 'manual')),
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, planned_session_id),
+      UNIQUE (user_id, activity_source, activity_external_id)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS connector_syncs (
       user_id TEXT NOT NULL REFERENCES users(id),
       id TEXT PRIMARY KEY,
@@ -227,6 +302,19 @@ INDEX_STATEMENTS = (
     """
     CREATE INDEX IF NOT EXISTS activities_user_recorded_on_idx
       ON activities(user_id, recorded_on DESC, updated_at DESC)
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS planned_sessions_provider_identity_idx
+      ON planned_sessions(user_id, source, external_id)
+      WHERE external_id IS NOT NULL
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS planned_sessions_user_date_idx
+      ON planned_sessions(user_id, scheduled_on, status)
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS planned_revisions_user_changed_idx
+      ON planned_session_revisions(user_id, changed_at DESC)
     """,
     """
     CREATE INDEX IF NOT EXISTS connector_syncs_user_started_at_idx
@@ -1470,6 +1558,11 @@ def _migrate_legacy_sqlite_tables(conn: sqlite3.Connection) -> None:
         "evidence_records",
         "daily_observations",
         "activities",
+        "plan_snapshots",
+        "plan_snapshot_sessions",
+        "planned_sessions",
+        "planned_session_revisions",
+        "planned_activity_matches",
         "connector_syncs",
         "connector_connections",
         "goal_revisions",

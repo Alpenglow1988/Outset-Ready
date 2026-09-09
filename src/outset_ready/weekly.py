@@ -13,6 +13,7 @@ from outset_ready.domain import (
     EvidenceSource,
 )
 from outset_ready.readiness import ReadinessAssessment, ReadinessState
+from outset_ready.plans import PlanWeek, build_plan_week
 from outset_ready.storage import (
     DEFAULT_OWNER_ID,
     list_activities_between,
@@ -126,6 +127,7 @@ class WeeklyRead:
     training: TrainingMetrics
     recovery: RecoveryMetrics
     optional_context: OptionalContextMetrics
+    plan: PlanWeek
     coverage: tuple[MetricCoverage, ...]
     activities: tuple[ActivityRecord, ...]
 
@@ -199,7 +201,13 @@ def build_weekly_read(
         period_start=period_start,
         period_end=period_end,
     )
-    assessment = assess_weekly_read(weight, recovery)
+    plan = build_plan_week(
+        conn,
+        period_start=period_start,
+        period_end=period_end,
+        user_id=user_id,
+    )
+    assessment = assess_weekly_read(weight, recovery, plan)
     coverage = calculate_metric_coverage(
         observations,
         evidence,
@@ -216,6 +224,7 @@ def build_weekly_read(
         training=training,
         recovery=recovery,
         optional_context=optional_context,
+        plan=plan,
         coverage=coverage,
         activities=tuple(activities),
     )
@@ -496,6 +505,7 @@ def calculate_metric_coverage(
 def assess_weekly_read(
     weight: WeightMetrics,
     recovery: RecoveryMetrics,
+    plan: PlanWeek | None = None,
 ) -> ReadinessAssessment:
     if weight.current_sample_days < 2 or weight.previous_sample_days < 2:
         return ReadinessAssessment(
@@ -512,18 +522,32 @@ def assess_weekly_read(
             "One or more recovery signals crossed the WL comparison thresholds.",
             "Review the evidence before adding training load or cutting fuel further.",
         )
+    completion_ratio = (
+        plan.completed_sessions / plan.planned_sessions
+        if plan is not None and plan.planned_sessions > 0
+        else None
+    )
+    if completion_ratio is not None and completion_ratio < 0.5:
+        return ReadinessAssessment(
+            ReadinessState.REVIEW_THE_PLAN,
+            "Less than half of the active weekly plan matched completed activity.",
+            "Review whether the remaining plan still fits before changing course.",
+        )
     if (
         weekly_change is not None
         and EXPECTED_LOSS_MIN_KG_PER_WEEK
         <= weekly_change
         <= EXPECTED_LOSS_MAX_KG_PER_WEEK
+        and (completion_ratio is None or completion_ratio >= 0.8)
     ):
         return ReadinessAssessment(
             ReadinessState.PROGRESSING,
             "The two weekly weight averages moved in the intended range.",
             "Keep the current approach and use the next completed week to confirm it.",
         )
-    if weekly_change is not None and weekly_change < FAST_LOSS_THRESHOLD_KG_PER_WEEK:
+    if completion_ratio is not None and completion_ratio < 0.8:
+        summary = "The goal direction and plan follow-through show mixed signals."
+    elif weekly_change is not None and weekly_change < FAST_LOSS_THRESHOLD_KG_PER_WEEK:
         summary = "Weight moved faster than the intended weekly range."
     elif weekly_change is not None and weekly_change > 0:
         summary = "The latest weekly weight average moved upwards."

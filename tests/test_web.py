@@ -15,8 +15,15 @@ from outset_ready.domain import (
     DailyObservation,
     EvidenceSource,
     GoalPriority,
+    PlanChangeType,
+    PlannedSessionStatus,
 )
-from outset_ready.periods import last_completed_training_week
+from outset_ready.periods import current_training_week, last_completed_training_week
+from outset_ready.plans import (
+    create_manual_session,
+    list_plan_revisions,
+    list_planned_sessions,
+)
 from outset_ready.settings import AppSettings
 from outset_ready.storage import (
     connect,
@@ -150,6 +157,146 @@ def test_weekly_read_is_private_and_shows_completed_week_evidence(client, settin
     assert "Long easy run" in response.text
     assert "12.0 km" in response.text
     assert "A missing value stays unknown" in response.text
+
+
+def test_current_week_is_private_and_owner_can_change_manual_plan(client, settings):
+    assert client.get("/week/current", follow_redirects=False).status_code == 303
+    sign_in(client)
+    period_start, period_end = current_training_week(date.today())
+    page = client.get("/week/current")
+
+    created = client.post(
+        "/week/current/sessions",
+        data={
+            "scheduled_on": period_start.isoformat(),
+            "activity_type": "run",
+            "title": "Easy run",
+            "duration_minutes": "45",
+            "distance_km": "7",
+            "csrf_token": csrf_from(page),
+        },
+        follow_redirects=False,
+    )
+    assert created.status_code == 303
+    with connect(settings.database_target) as conn:
+        session = list_planned_sessions(
+            conn, start_date=period_start, end_date=period_end
+        )[0]
+
+    edit_page = client.get("/week/current")
+    updated = client.post(
+        f"/week/current/sessions/{session.id}",
+        data={
+            "scheduled_on": (period_start + timedelta(days=1)).isoformat(),
+            "activity_type": "run",
+            "title": "Easy run after work",
+            "duration_minutes": "40",
+            "distance_km": "",
+            "change_type": "moved",
+            "reason": "schedule",
+            "reason_note": "Late meeting",
+            "csrf_token": csrf_from(edit_page),
+        },
+        follow_redirects=False,
+    )
+    assert updated.status_code == 303
+
+    skip_page = client.get("/week/current")
+    skipped = client.post(
+        f"/week/current/sessions/{session.id}/skip",
+        data={
+            "reason": "recovery",
+            "reason_note": "",
+            "csrf_token": csrf_from(skip_page),
+        },
+        follow_redirects=False,
+    )
+    assert skipped.status_code == 303
+
+    restore_page = client.get("/week/current")
+    restored = client.post(
+        f"/week/current/sessions/{session.id}/restore",
+        data={"csrf_token": csrf_from(restore_page)},
+        follow_redirects=False,
+    )
+    assert restored.status_code == 303
+    with connect(settings.database_target) as conn:
+        saved = list_planned_sessions(
+            conn, start_date=period_start, end_date=period_end
+        )[0]
+        revisions = list_plan_revisions(conn, session_ids=[session.id])
+
+    assert saved.title == "Easy run after work"
+    assert saved.status is PlannedSessionStatus.PLANNED
+    assert [revision.change_type for revision in revisions] == [
+        PlanChangeType.RESTORED,
+        PlanChangeType.SKIPPED,
+        PlanChangeType.MOVED,
+        PlanChangeType.ADDED,
+    ]
+    rendered = client.get("/week/current")
+    assert "This is a live account of the week, not a daily judgement" in rendered.text
+    assert 'data-pending-label="Adding session"' in rendered.text
+
+
+def test_owner_can_resolve_ambiguous_activity_match(client, settings):
+    sign_in(client)
+    period_start, period_end = current_training_week(date.today())
+    with connect(settings.database_target) as conn:
+        session = create_manual_session(
+            conn,
+            scheduled_on=period_start,
+            activity_type=ActivityType.RUN,
+            title="Planned run",
+        )
+        for external_id in ("run-one", "run-two"):
+            upsert_activity(
+                conn,
+                ActivityRecord(
+                    source=EvidenceSource.GARMIN,
+                    external_id=external_id,
+                    recorded_on=period_start,
+                    activity_type=ActivityType.RUN,
+                    name=external_id,
+                ),
+            )
+
+    page = client.get("/week/current")
+    assert "run-one" in page.text and "run-two" in page.text
+    matched = client.post(
+        f"/week/current/sessions/{session.id}/match",
+        data={
+            "activity_identity": "garmin|run-two",
+            "csrf_token": csrf_from(page),
+        },
+        follow_redirects=False,
+    )
+
+    assert matched.status_code == 303
+    assert "Matched to run-two" in client.get("/week/current").text
+
+
+def test_owner_can_refresh_current_week_from_garmin(client, monkeypatch):
+    sign_in(client)
+    page = client.get("/week/current")
+    calls = []
+
+    def refresh(_settings, *, user_id, start_date, end_date):
+        calls.append((user_id, start_date, end_date))
+
+    monkeypatch.setattr("outset_ready.web.import_hosted_garmin_plan", refresh)
+    response = client.post(
+        "/week/current/garmin",
+        data={"csrf_token": csrf_from(page)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == (
+        "/week/current?notice=garmin-plan-refreshed"
+    )
+    assert calls[0][0] == "owner"
+    assert (calls[0][2] - calls[0][1]).days == 6
 
 
 def test_invalid_login_is_generic_and_does_not_authenticate(client):
