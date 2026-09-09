@@ -37,19 +37,51 @@
           </div>
         </header>
         <section class="connection-list">
+          {% if notice %}<p class="form-notice" role="status">{{ notice }}</p>{% endif %}
+          {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
           <article class="connection-card">
             <div>
               <p class="eyebrow">Activity and recovery</p>
               <h2>Garmin</h2>
-              {% if garmin_sync %}
+              {% if garmin_connection and garmin_sync %}
                 <p>Last sync: {{ garmin_sync.status.value | replace('_', ' ') }} through {{ garmin_sync.end_date.strftime('%d %b %Y') }}.</p>
+              {% elif garmin_connection %}
+                <p>Your token file is saved. Run the first sync to verify it and import seven days of evidence.</p>
               {% else %}
                 <p>Not connected to this Ready workspace yet.</p>
               {% endif %}
             </div>
             <div class="connection-action">
-              <span class="status">{% if garmin_sync %}{{ garmin_sync.status.value | replace('_', ' ') }}{% else %}Not connected{% endif %}</span>
-              <p>Browser connection and MFA arrive in Build #5. Until then, the local sync command remains available.</p>
+              <span class="status">
+                {% if garmin_connection %}{{ garmin_connection.status.value | replace('_', ' ') }}{% else %}Not connected{% endif %}
+              </span>
+              {% if garmin_connection and garmin_connection.status.value != 'reconnect_required' %}
+                <form class="connection-form" method="post" action="/connections/garmin/sync">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button class="primary-button" type="submit">Sync now</button>
+                </form>
+              {% endif %}
+              {% if garmin_connection %}
+                <form class="connection-form" method="post" action="/connections/garmin/disconnect">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <button class="quiet-action" type="submit">Remove connection</button>
+                  <p class="field-hint">This removes the saved Garmin token. Ready keeps evidence you already imported.</p>
+                </form>
+              {% endif %}
+              <details class="connection-setup"{% if not garmin_connection or garmin_connection.status.value == 'reconnect_required' %} open{% endif %}>
+                <summary>{% if garmin_connection %}Replace Garmin token{% else %}Connect Garmin{% endif %}</summary>
+                <p>Run this on your Mac. Garmin can ask for MFA there:</p>
+                <code>python -m outset_ready.cli export-garmin-token</code>
+                <form class="connection-form" method="post" action="/connections/garmin/token" enctype="multipart/form-data">
+                  <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                  <label>
+                    Garmin token file
+                    <input type="file" name="token_file" accept="application/json,.json" required>
+                  </label>
+                  <button class="primary-button" type="submit">Save connection</button>
+                </form>
+                <p class="field-hint">Ready encrypts the reusable tokens before storing them. The website never receives your Garmin password.</p>
+              </details>
             </div>
           </article>
           <article class="connection-card">

@@ -50,6 +50,12 @@ class ConnectorSyncStatus(StrEnum):
     FAILED = "failed"
 
 
+class ConnectorConnectionStatus(StrEnum):
+    TOKEN_SAVED = "token_saved"
+    CONNECTED = "connected"
+    RECONNECT_REQUIRED = "reconnect_required"
+
+
 OPTIONAL_CONTEXT_KINDS = frozenset(
     {
         EvidenceKind.ALCOHOL_UNITS,
@@ -143,6 +149,14 @@ class ConnectorSync:
     activity_records: int
     warnings: int
     error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class ConnectorConnection:
+    connector: str
+    status: ConnectorConnectionStatus
+    connected_at: datetime | None
+    updated_at: datetime
 
 
 def validate_evidence(record: EvidenceRecord) -> None:

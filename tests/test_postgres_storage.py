@@ -37,6 +37,7 @@ def test_postgres_implements_the_ready_storage_contract():
     with connect(POSTGRES_URL) as conn:
         with conn.transaction():
             for table in (
+                "connector_connections",
                 "connector_syncs",
                 "activities",
                 "daily_observations",

@@ -16,3 +16,9 @@ def test_vercel_only_builds_main():
 
     assert branch.returncode == 0  # Vercel ignores this build.
     assert main.returncode == 1  # Vercel continues this build.
+
+
+def test_fastapi_function_has_bounded_time_for_garmin_sync():
+    config = json.loads((Path(__file__).parents[1] / "vercel.json").read_text())
+
+    assert config["functions"]["app.py"]["maxDuration"] == 120

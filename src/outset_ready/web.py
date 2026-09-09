@@ -5,21 +5,37 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
-from fastapi import FastAPI, Form, HTTPException, Request, status
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from outset_ready.auth import csrf_token_matches, new_csrf_token, verify_password
+from outset_ready.connectors.garmin.client import (
+    GarminAuthenticationRequiredError,
+    GarminConnectorError,
+)
+from outset_ready.connectors.garmin.hosted import (
+    GarminConnectionUnavailable,
+    disconnect_hosted_garmin,
+    save_uploaded_token,
+    sync_hosted_garmin,
+)
+from outset_ready.connectors.garmin.tokens import (
+    MAX_TOKEN_BUNDLE_BYTES,
+    GarminTokenBundleError,
+)
 from outset_ready.domain import EvidenceKind, OPTIONAL_CONTEXT_KINDS
 from outset_ready.readiness import ReadinessSignals, assess_readiness
 from outset_ready.settings import AppSettings, load_app_settings
 from outset_ready.session import SignedSessionMiddleware
 from outset_ready.storage import (
+    ConnectorSyncAlreadyRunning,
     add_manual_evidence,
     connect,
     count_evidence_days,
     database_is_ready,
+    fetch_connector_connection,
     fetch_latest_connector_sync,
     init_db,
     list_goals,
@@ -55,7 +71,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
         )
         yield
 
-    app = FastAPI(title="Outset Ready", version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title="Outset Ready", version="0.3.0", lifespan=lifespan)
     app.state.settings = settings
     app.add_middleware(
         SignedSessionMiddleware,
@@ -137,6 +153,11 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
             evidence_days = count_evidence_days(conn, user_id=user_id)
             activities = list_recent_activities(conn, limit=5, user_id=user_id)
             garmin_sync = fetch_latest_connector_sync(conn, "garmin", user_id=user_id)
+            garmin_connection = fetch_connector_connection(
+                conn,
+                connector="garmin",
+                user_id=user_id,
+            )
 
         assessment = assess_readiness(ReadinessSignals(evidence_days=evidence_days))
         visible_evidence = [
@@ -156,6 +177,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
                 "evidence_days": evidence_days,
                 "activities": activities,
                 "garmin_sync": garmin_sync,
+                "garmin_connection": garmin_connection,
                 "today": date.today().isoformat(),
                 "evidence_options": EVIDENCE_OPTIONS,
                 "optional_options": OPTIONAL_OPTIONS,
@@ -188,20 +210,125 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
             )
         return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
-    @app.get("/connections")
-    def connections_page(request: Request):
+    def render_connections(
+        request: Request,
+        *,
+        notice: str | None = None,
+        error: str | None = None,
+        status_code: int = 200,
+    ):
         user_id = _require_owner(request, settings)
         with connect(settings.database_target) as conn:
             garmin_sync = fetch_latest_connector_sync(conn, "garmin", user_id=user_id)
+            garmin_connection = fetch_connector_connection(
+                conn,
+                connector="garmin",
+                user_id=user_id,
+            )
         return templates.TemplateResponse(
             request=request,
             name="connections.html",
             context={
                 "garmin_sync": garmin_sync,
+                "garmin_connection": garmin_connection,
                 "owner_email": settings.owner_email,
                 "csrf_token": _session_csrf_token(request),
                 "persistent_storage": settings.persistent_storage,
+                "notice": notice,
+                "error": error,
             },
+            status_code=status_code,
+        )
+
+    @app.get("/connections")
+    def connections_page(request: Request, notice: str | None = None):
+        messages = {
+            "garmin-token-saved": (
+                "Garmin token saved. Run the first sync to verify the connection."
+            ),
+            "garmin-sync-complete": "Garmin sync completed.",
+            "garmin-disconnected": (
+                "Garmin connection removed. Imported evidence remains available."
+            ),
+        }
+        return render_connections(request, notice=messages.get(notice or ""))
+
+    @app.post("/connections/garmin/token")
+    async def upload_garmin_token(
+        request: Request,
+        token_file: UploadFile = File(...),
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        token_payload = await token_file.read(MAX_TOKEN_BUNDLE_BYTES + 1)
+        await token_file.close()
+        try:
+            save_uploaded_token(
+                settings,
+                user_id=user_id,
+                token_payload=token_payload,
+            )
+        except GarminTokenBundleError as exc:
+            return render_connections(
+                request,
+                error=str(exc),
+                status_code=400,
+            )
+        return RedirectResponse(
+            url="/connections?notice=garmin-token-saved",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.post("/connections/garmin/sync")
+    def sync_garmin_connection(
+        request: Request,
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        try:
+            sync_hosted_garmin(settings, user_id=user_id)
+        except ConnectorSyncAlreadyRunning:
+            return render_connections(
+                request,
+                error="A Garmin sync is already running. Wait for it to finish.",
+                status_code=409,
+            )
+        except (GarminAuthenticationRequiredError, GarminConnectionUnavailable):
+            return render_connections(
+                request,
+                error=(
+                    "Garmin requires a new token file. Authenticate on your Mac, "
+                    "then replace the saved connection."
+                ),
+                status_code=409,
+            )
+        except GarminConnectorError:
+            return render_connections(
+                request,
+                error=(
+                    "Garmin could not finish the sync. Your saved connection and "
+                    "existing evidence remain available."
+                ),
+                status_code=502,
+            )
+        return RedirectResponse(
+            url="/connections?notice=garmin-sync-complete",
+            status_code=status.HTTP_303_SEE_OTHER,
+        )
+
+    @app.post("/connections/garmin/disconnect")
+    def disconnect_garmin_connection(
+        request: Request,
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        disconnect_hosted_garmin(settings, user_id=user_id)
+        return RedirectResponse(
+            url="/connections?notice=garmin-disconnected",
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     @app.get("/api/goals")

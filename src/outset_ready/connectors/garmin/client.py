@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from outset_ready.connectors.garmin.config import GarminSettings
 from outset_ready.connectors.garmin.normalise import extract_activity_date
+from outset_ready.connectors.garmin.tokens import normalise_token_bundle
 
 
 Garmin: type[Any] | None = None
@@ -18,6 +19,10 @@ class MissingGarminCredentialsError(GarminConnectorError):
     """Raised when Garmin credentials have not been configured."""
 
 
+class GarminAuthenticationRequiredError(GarminConnectorError):
+    """Raised when Garmin rejects reusable token material."""
+
+
 class OptionalGarminEndpointUnavailable(GarminConnectorError):
     """Raised when the installed client lacks an optional endpoint."""
 
@@ -27,25 +32,59 @@ class GarminClient:
         self.settings = settings
         self._client: Any | None = None
 
-    def login(self, prompt_mfa: Callable[[], str] | None = None) -> None:
-        if not self.settings.email or not self.settings.password:
+    def login(
+        self,
+        prompt_mfa: Callable[[], str] | None = None,
+        *,
+        token_bundle: str | None = None,
+    ) -> None:
+        if token_bundle is None and (
+            not self.settings.email or not self.settings.password
+        ):
             raise MissingGarminCredentialsError(
                 "Garmin credentials are missing. Set GARMIN_EMAIL and "
                 "GARMIN_PASSWORD in .env or the current environment."
             )
 
-        self.settings.token_dir.mkdir(parents=True, exist_ok=True)
         garmin_class = _get_garmin_class()
-        kwargs = {"prompt_mfa": prompt_mfa} if prompt_mfa is not None else {}
-        self._client = garmin_class(
-            self.settings.email,
-            self.settings.password,
-            **kwargs,
-        )
+        if token_bundle is not None:
+            self._client = garmin_class()
+            tokenstore = normalise_token_bundle(token_bundle)
+        else:
+            self.settings.token_dir.mkdir(parents=True, exist_ok=True)
+            kwargs = {"prompt_mfa": prompt_mfa} if prompt_mfa is not None else {}
+            self._client = garmin_class(
+                self.settings.email,
+                self.settings.password,
+                **kwargs,
+            )
+            tokenstore = str(self.settings.token_dir)
         try:
-            self._client.login(tokenstore=str(self.settings.token_dir))
+            self._client.login(tokenstore=tokenstore)
         except Exception as exc:
+            if _is_authentication_failure(exc):
+                raise GarminAuthenticationRequiredError(
+                    "Garmin rejected the saved connection. Reconnect Garmin."
+                ) from exc
+            if token_bundle is not None:
+                raise GarminConnectorError(
+                    "Garmin could not verify the saved connection."
+                ) from exc
             raise GarminConnectorError(f"Garmin login failed: {exc}") from exc
+
+    def export_token_bundle(self) -> str:
+        if self._client is None:
+            raise GarminConnectorError("Garmin client is not logged in.")
+        internal_client = getattr(self._client, "client", None)
+        dumps = getattr(internal_client, "dumps", None)
+        if dumps is None:
+            raise GarminConnectorError(
+                "The installed Garmin client cannot export reusable tokens."
+            )
+        try:
+            return normalise_token_bundle(dumps())
+        except Exception as exc:
+            raise GarminConnectorError("Garmin token export failed.") from exc
 
     def fetch_user_summary(self, payload_date: date) -> dict[str, Any]:
         response = self._call("get_user_summary", "user summary", payload_date.isoformat())
@@ -126,6 +165,10 @@ class GarminClient:
         try:
             return method(*args, **kwargs)
         except Exception as exc:
+            if _is_authentication_failure(exc):
+                raise GarminAuthenticationRequiredError(
+                    "Garmin rejected the saved connection. Reconnect Garmin."
+                ) from exc
             raise GarminConnectorError(f"Garmin {endpoint_name} fetch failed: {exc}") from exc
 
     def _call_optional(self, method_name: str, endpoint_name: str, *args: str) -> Any:
@@ -179,3 +222,24 @@ def _activity_identity(activity: dict[str, Any]) -> str:
             return f"{key}:{value}"
     return repr(sorted(activity.items()))
 
+
+def _is_authentication_failure(exc: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        message = str(current).casefold()
+        if any(
+            marker in message
+            for marker in (
+                "401",
+                "403",
+                "unauthorized",
+                "authentication failed",
+                "token rejected",
+                "missing tokens",
+            )
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False

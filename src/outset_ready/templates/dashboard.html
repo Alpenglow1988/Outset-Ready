@@ -61,16 +61,22 @@
           <div class="source-item">
             <div class="source-meta">
               <strong>Garmin</strong>
-              {% if garmin_sync %}
+              {% if garmin_connection %}
+                <span>{{ garmin_connection.status.value | replace('_', ' ') }}</span>
+              {% elif garmin_sync %}
                 <span>{{ garmin_sync.status.value | replace('_', ' ') }}</span>
               {% else %}
                 <span>Ready to connect</span>
               {% endif %}
             </div>
-            {% if garmin_sync %}
+            {% if garmin_connection and garmin_connection.status.value == 'reconnect_required' %}
+              <p><a class="text-link" href="/connections">Reconnect Garmin</a> to resume imports. Existing evidence remains available.</p>
+            {% elif garmin_sync %}
               <p>Synced through {{ garmin_sync.end_date.strftime('%d %b %Y') }}. {{ garmin_sync.daily_records }} daily records and {{ garmin_sync.activity_records }} activities processed.</p>
+            {% elif garmin_connection %}
+              <p><a class="text-link" href="/connections">Run the first sync</a> to verify the saved token and import evidence.</p>
             {% else %}
-              <p><a class="text-link" href="/connections">View the connection status</a>. Hosted Garmin sign-in arrives in Build #5.</p>
+              <p><a class="text-link" href="/connections">Connect Garmin</a> with a reusable token generated on your Mac.</p>
             {% endif %}
           </div>
           <div class="source-item">
