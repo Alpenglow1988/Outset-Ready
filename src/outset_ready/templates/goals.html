@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Goals · Outset Ready</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+    <script src="{{ url_for('static', path='/app.js') }}" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="Outset Ready home">
+          <img class="brand-mark" src="{{ url_for('static', path='/outset-mark.svg') }}" alt="">
+          <span>Outset <strong>Ready</strong></span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a class="nav-link" href="/">Overview</a>
+          <a class="nav-link" href="/week">Weekly read</a>
+          <a class="nav-link active" href="/goals">Goals</a>
+          <span class="nav-link disabled">Events</span>
+          <a class="nav-link" href="/connections">Connections</a>
+        </nav>
+        <div class="sidebar-footer">
+          <p class="sidebar-note">{{ owner_email }}<br>{% if persistent_storage %}Persistent private data{% else %}Local development data{% endif %}</p>
+          <form class="logout-form" method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="nav-link logout-button" type="submit">Sign out</button>
+          </form>
+        </div>
+      </aside>
+
+      <main>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Your direction</p>
+            <h1>Goals</h1>
+            <p class="lede">Choose what leads now, what supports it and what stays on the horizon.</p>
+          </div>
+        </header>
+
+        {% if notice %}<p class="form-notice" role="status">{{ notice }}</p>{% endif %}
+        {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+
+        <div class="goal-management-layout">
+          <section class="goal-stack-section">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Active stack</p>
+                <h2>What Ready keeps in view</h2>
+              </div>
+            </div>
+
+            <div class="editable-goal-list">
+              {% for goal in goals %}
+                <article class="editable-goal goal-{{ goal.priority.value }}">
+                  <div class="editable-goal-summary">
+                    <div>
+                      <div class="goal-meta">
+                        <span>{{ goal.priority.value }}</span>
+                        <span>{{ goal.category.value }}</span>
+                      </div>
+                      <h3>{{ goal.title }}</h3>
+                      <p class="goal-target">
+                        {% if goal.target_value is not none %}Target {{ '%g' | format(goal.target_value) }} {{ goal.target_unit }}{% endif %}
+                        {% if goal.target_value is not none and goal.target_date %} · {% endif %}
+                        {% if goal.target_date %}By {{ goal.target_date.strftime('%d %b %Y') }}{% endif %}
+                        {% if goal.target_value is none and not goal.target_date %}No target detail added yet{% endif %}
+                      </p>
+                    </div>
+                    <details class="goal-editor">
+                      <summary>Edit goal</summary>
+                      <form method="post" action="/goals/{{ goal.id }}" data-pending>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <label>
+                          Goal name
+                          <input type="text" name="title" value="{{ goal.title }}" maxlength="120" required>
+                        </label>
+                        <div class="form-row">
+                          <label>
+                            Category
+                            <select name="category" required>
+                              {% for category in goal_categories %}
+                                <option value="{{ category.value }}"{% if category == goal.category %} selected{% endif %}>{{ category.value | capitalize }}</option>
+                              {% endfor %}
+                            </select>
+                          </label>
+                          <label>
+                            Priority
+                            <select name="priority" required>
+                              {% for priority in goal_priorities %}
+                                <option value="{{ priority.value }}"{% if priority == goal.priority %} selected{% endif %}>{{ priority.value | capitalize }}</option>
+                              {% endfor %}
+                            </select>
+                          </label>
+                        </div>
+                        <p class="field-hint">Choosing Current moves the existing current goal to Supporting. Ready records that handover in goal history.</p>
+                        <div class="form-row target-row">
+                          <label>
+                            Target value <span>Optional</span>
+                            <input type="number" name="target_value" step="any" min="0.000001" value="{% if goal.target_value is not none %}{{ '%g' | format(goal.target_value) }}{% endif %}">
+                          </label>
+                          <label>
+                            Unit <span>Required with a value</span>
+                            <input type="text" name="target_unit" maxlength="24" placeholder="kg, cm, km" value="{{ goal.target_unit or '' }}">
+                          </label>
+                          <label>
+                            Target date <span>Optional</span>
+                            <input type="date" name="target_date" value="{{ goal.target_date.isoformat() if goal.target_date else '' }}">
+                          </label>
+                        </div>
+                        <button class="primary-button" type="submit" data-pending-label="Saving goal">Save changes</button>
+                      </form>
+                      {% if goal.priority.value == 'current' %}
+                        <p class="field-hint archive-hint">Choose a different current goal before archiving this one.</p>
+                      {% else %}
+                        <form class="archive-form" method="post" action="/goals/{{ goal.id }}/archive" data-pending>
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                          <button class="quiet-action" type="submit" data-pending-label="Archiving goal">Archive goal</button>
+                        </form>
+                      {% endif %}
+                    </details>
+                  </div>
+                </article>
+              {% endfor %}
+            </div>
+          </section>
+
+          <aside class="panel add-goal-panel">
+            <p class="eyebrow">Add a goal</p>
+            <h2>Start with what matters</h2>
+            <p>Name the goal and place it in your stack. Target detail can wait until it helps the assessment.</p>
+            <form method="post" action="/goals" data-pending>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <label>
+                Goal name
+                <input type="text" name="title" maxlength="120" placeholder="What do you want to be ready for?" required>
+              </label>
+              <div class="form-row">
+                <label>
+                  Category
+                  <select name="category" required>
+                    {% for category in goal_categories %}
+                      <option value="{{ category.value }}">{{ category.value | capitalize }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+                <label>
+                  Priority
+                  <select name="priority" required>
+                    {% for priority in goal_priorities %}
+                      <option value="{{ priority.value }}"{% if priority.value == 'supporting' %} selected{% endif %}>{{ priority.value | capitalize }}</option>
+                    {% endfor %}
+                  </select>
+                </label>
+              </div>
+              <p class="field-hint">Choosing Current moves the existing current goal to Supporting.</p>
+              <details class="optional-inputs">
+                <summary>Add target details now</summary>
+                <div class="optional-fields">
+                  <label>
+                    Target value
+                    <input type="number" name="target_value" step="any" min="0.000001">
+                  </label>
+                  <label>
+                    Unit <span>Required with a value</span>
+                    <input type="text" name="target_unit" maxlength="24" placeholder="kg, cm, km">
+                  </label>
+                  <label>
+                    Target date
+                    <input type="date" name="target_date">
+                  </label>
+                </div>
+              </details>
+              <button class="primary-button" type="submit" data-pending-label="Adding goal">Add goal</button>
+            </form>
+          </aside>
+        </div>
+
+        {% if archived_goals %}
+          <details class="archived-goals">
+            <summary>Archived goals ({{ archived_goals | length }})</summary>
+            <ul>
+              {% for goal in archived_goals %}
+                <li><strong>{{ goal.title }}</strong><span>Archived {{ goal.archived_at.strftime('%d %b %Y') }}</span></li>
+              {% endfor %}
+            </ul>
+          </details>
+        {% endif %}
+      </main>
+    </div>
+  </body>
+</html>

@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Outset Ready</title>
     <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+    <script src="{{ url_for('static', path='/app.js') }}" defer></script>
   </head>
   <body>
     <div class="shell">
@@ -16,7 +17,7 @@
         <nav aria-label="Main navigation">
           <a class="nav-link active" href="/">Overview</a>
           <a class="nav-link" href="/week">Weekly read</a>
-          <span class="nav-link disabled">Goals</span>
+          <a class="nav-link" href="/goals">Goals</a>
           <span class="nav-link disabled">Events</span>
           <a class="nav-link" href="/connections">Connections</a>
         </nav>
@@ -98,7 +99,7 @@
               <p class="eyebrow">Goal stack</p>
               <h2>What matters now, and what it supports</h2>
             </div>
-            <button class="quiet-button" disabled>Edit goals soon</button>
+            <a class="quiet-button text-link" href="/goals">Manage goals</a>
           </div>
           <div class="goal-grid">
             {% for goal in goals %}
@@ -173,7 +174,7 @@
             <p class="eyebrow">Manual fallback</p>
             <h2>Add useful evidence</h2>
             <p>Garmin will do most of this later. Manual entry always remains available.</p>
-            <form method="post" action="/evidence">
+            <form method="post" action="/evidence" data-pending>
               <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
               <label>
                 Date
@@ -204,7 +205,7 @@
                 <summary>Calories, protein or alcohol</summary>
                 <p>These can enrich the read. Ready will never require them. Add one through the optional context group in the Evidence menu.</p>
               </details>
-              <button class="primary-button" type="submit">Add evidence</button>
+              <button class="primary-button" type="submit" data-pending-label="Adding evidence">Add evidence</button>
             </form>
           </section>
         </div>

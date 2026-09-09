@@ -14,6 +14,7 @@ from outset_ready.domain import (
     ConnectorSyncStatus,
     DailyObservation,
     EvidenceSource,
+    GoalPriority,
 )
 from outset_ready.periods import last_completed_training_week
 from outset_ready.settings import AppSettings
@@ -21,6 +22,7 @@ from outset_ready.storage import (
     connect,
     fetch_connector_connection,
     finish_connector_sync,
+    list_goals,
     list_recent_evidence,
     load_connector_credentials,
     save_connector_credentials,
@@ -224,6 +226,150 @@ def test_goals_api_returns_401_until_authenticated(client):
     response = client.get("/api/goals")
     assert response.status_code == 200
     assert response.json()[0]["title"] == "Reach 85 kg"
+
+
+def test_goal_management_is_private_and_shows_the_active_stack(client):
+    assert client.get("/goals", follow_redirects=False).status_code == 303
+    sign_in(client)
+
+    response = client.get("/goals")
+
+    assert response.status_code == 200
+    assert "What Ready keeps in view" in response.text
+    assert "Reach 85 kg" in response.text
+    assert "Add target details now" in response.text
+
+
+def test_owner_can_create_edit_and_archive_a_goal(client, settings):
+    sign_in(client)
+    page = client.get("/goals")
+    created = client.post(
+        "/goals",
+        data={
+            "title": "Walk the South Downs Way",
+            "category": "adventure",
+            "priority": "future",
+            "target_value": "160",
+            "target_unit": "km",
+            "target_date": "2027-09-01",
+            "csrf_token": csrf_from(page),
+        },
+        follow_redirects=False,
+    )
+
+    assert created.status_code == 303
+    assert created.headers["location"] == "/goals?notice=created"
+    with connect(settings.database_target) as conn:
+        goal = next(item for item in list_goals(conn) if item.title.startswith("Walk"))
+
+    edit_page = client.get("/goals")
+    updated = client.post(
+        f"/goals/{goal.id}",
+        data={
+            "title": "Complete the South Downs Way",
+            "category": "adventure",
+            "priority": "current",
+            "target_value": "160",
+            "target_unit": "km",
+            "target_date": "2027-09-01",
+            "csrf_token": csrf_from(edit_page),
+        },
+        follow_redirects=False,
+    )
+
+    assert updated.status_code == 303
+    with connect(settings.database_target) as conn:
+        goals = list_goals(conn)
+    assert sum(item.priority is GoalPriority.CURRENT for item in goals) == 1
+    assert next(item for item in goals if item.id == goal.id).title.startswith("Complete")
+
+    archive_page = client.get("/goals")
+    archived = client.post(
+        "/goals/goal-weight-85/archive",
+        data={"csrf_token": csrf_from(archive_page)},
+        follow_redirects=False,
+    )
+
+    assert archived.status_code == 303
+    assert archived.headers["location"] == "/goals?notice=archived"
+    assert "Archived goals (1)" in client.get(archived.headers["location"]).text
+
+
+def test_weekly_read_keeps_the_goal_target_that_applied_to_that_week(client, settings):
+    sign_in(client)
+    period_start, period_end = last_completed_training_week(date.today())
+    with connect(settings.database_target) as conn:
+        with conn:
+            conn.execute(
+                "UPDATE goal_revisions SET effective_from = ? WHERE goal_id = ?",
+                ((period_start - timedelta(days=1)).isoformat(), "goal-weight-85"),
+            )
+        upsert_daily_observation(
+            conn,
+            DailyObservation(
+                recorded_on=period_end,
+                source=EvidenceSource.GARMIN,
+                weight_kg=90,
+            ),
+        )
+    page = client.get("/goals")
+    response = client.post(
+        "/goals/goal-weight-85",
+        data={
+            "title": "Reach 80 kg",
+            "category": "health",
+            "priority": "current",
+            "target_value": "80",
+            "target_unit": "kg",
+            "target_date": "",
+            "csrf_token": csrf_from(page),
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    weekly_page = client.get("/week")
+    assert "5.0 kg" in weekly_page.text
+    assert "10.0 kg" not in weekly_page.text
+
+
+def test_current_goal_cannot_be_archived_or_changed_without_csrf(client):
+    sign_in(client)
+    page = client.get("/goals")
+
+    archive = client.post(
+        "/goals/goal-weight-85/archive",
+        data={"csrf_token": csrf_from(page)},
+    )
+    update = client.post(
+        "/goals/goal-weight-85",
+        data={
+            "title": "Reach 84 kg",
+            "category": "health",
+            "priority": "current",
+            "target_value": "84",
+            "target_unit": "kg",
+            "target_date": "",
+            "csrf_token": "wrong",
+        },
+    )
+
+    assert archive.status_code == 400
+    assert "different current goal" in archive.text
+    assert update.status_code == 403
+
+
+def test_slow_forms_disable_repeat_submissions(client):
+    sign_in(client)
+
+    connections = client.get("/connections")
+    goals = client.get("/goals")
+    script = client.get("/static/app.js")
+
+    assert 'data-pending-label="Saving connection"' in connections.text
+    assert 'data-pending-label="Adding goal"' in goals.text
+    assert script.status_code == 200
+    assert 'form.dataset.submitting === "true"' in script.text
 
 
 def test_connections_page_is_private_and_reports_current_boundary(client):

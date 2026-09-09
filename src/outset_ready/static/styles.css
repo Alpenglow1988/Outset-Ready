@@ -196,6 +196,23 @@ input, select, textarea { width: 100%; border: 1px solid var(--line); border-rad
 textarea { resize: vertical; }
 .primary-button { border: 1px solid var(--ink); border-radius: 0; background: var(--ink); color: white; cursor: pointer; padding: 13px 17px; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .primary-button:hover { background: transparent; color: var(--ink); }
+.primary-button:disabled, .quiet-action:disabled {
+  cursor: wait;
+  opacity: .7;
+}
+.is-pending::before {
+  content: "";
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin-right: 9px;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 50%;
+  vertical-align: -2px;
+  animation: pending-spin .7s linear infinite;
+}
+@keyframes pending-spin { to { transform: rotate(360deg); } }
 .button-link { display: inline-block; text-decoration: none; }
 .optional-inputs, .optional-read { border-top: 1px solid var(--line); padding-top: 14px; color: var(--muted); }
 .optional-inputs summary, .optional-read summary { cursor: pointer; color: var(--ink); font-size: 13px; font-weight: 700; }
@@ -232,6 +249,38 @@ textarea { resize: vertical; }
 .history-progress progress::-webkit-progress-bar { background: var(--line); }
 .history-progress progress::-webkit-progress-value { background: var(--pine); }
 .history-progress progress::-moz-progress-bar { background: var(--pine); }
+
+.goal-management-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(330px, .6fr);
+  gap: 24px;
+  margin-top: 42px;
+  align-items: start;
+}
+.editable-goal-list { display: grid; gap: 12px; }
+.editable-goal {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--soft-muted);
+  background: var(--surface);
+  padding: 22px 24px;
+}
+.editable-goal.goal-current { border-left-color: var(--ink); }
+.editable-goal.goal-future { border-left-color: var(--gold); }
+.editable-goal-summary .goal-meta { margin-bottom: 14px; }
+.editable-goal-summary h3 { margin-bottom: 7px; }
+.goal-editor { margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--line); }
+.goal-editor > summary, .archived-goals > summary { cursor: pointer; font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.goal-editor form { margin-top: 18px; }
+.form-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.target-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.archive-form { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.archive-hint { margin: 18px 0 0; }
+.add-goal-panel { position: sticky; top: 30px; }
+.optional-fields { display: grid; gap: 12px; margin-top: 14px; }
+.archived-goals { margin-top: 36px; padding-top: 18px; border-top: 1px solid var(--line); }
+.archived-goals ul { margin: 16px 0 0; padding: 0; list-style: none; }
+.archived-goals li { display: flex; justify-content: space-between; gap: 16px; padding: 11px 0; border-top: 1px solid var(--line); font-size: 13px; }
+.archived-goals li span { color: var(--muted); }
 
 .weekly-summary { margin-bottom: 46px; }
 .calculation-note { max-width: 250px; font-size: 12px; }
@@ -321,6 +370,8 @@ textarea { resize: vertical; }
   .coverage-grid article:nth-child(2n) { border-right: 0; }
   .activity-table li { grid-template-columns: 90px 80px minmax(150px, 1fr) 70px; }
   .activity-table > li > span:last-child { display: none; }
+  .goal-management-layout { grid-template-columns: 1fr; }
+  .add-goal-panel { position: static; }
 }
 
 @media (max-width: 760px) {
@@ -345,6 +396,13 @@ textarea { resize: vertical; }
   .source-strip > :not(:last-child) { border-right: 0; }
   .source-heading, .source-item { border-bottom: 1px solid var(--line); }
   .source-item:last-child { border-bottom: 0; }
+  .form-row, .target-row { grid-template-columns: 1fr; }
+  .editable-goal { padding: 19px; }
+  .archived-goals li { flex-direction: column; gap: 4px; }
   .login-shell { padding: 28px 0; }
   .login-card { margin-top: 30px; padding: 26px 22px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .is-pending::before { animation: none; }
 }

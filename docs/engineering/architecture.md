@@ -73,6 +73,22 @@ write the same observations and activities again.
 The weekly read remains deterministic. Issue #8 will add planned-versus-completed
 work, and issue #9 will add one user-confirmed, cached AI interpretation.
 
+## Editable goal stack
+
+The owner can create, edit and archive health, fitness or adventure goals. Ready
+enforces one active current priority. Selecting another current goal explicitly
+moves the previous current goal to supporting; changing or archiving the current
+goal directly fails with guidance to choose its replacement first.
+
+Every goal mutation writes an append-only snapshot to `goal_revisions`. Weekly
+calculations resolve the revision effective at the end of that period, so a later
+target or priority change cannot rewrite an earlier read. Archive remains a soft
+operation and preserves the complete goal history.
+
+Scheduled handovers, goal relationships and configurable evidence templates stay
+outside this slice. They can build on the same revision history without changing
+the current goal-management contract.
+
 ## Private owner and deployment boundary
 
 `app.py` exports the FastAPI application for Vercel discovery. Production fails
@@ -136,6 +152,6 @@ Missing optional context must never force `Building a picture`. That state shoul
 
 ## Immediate follow-on
 
-Calendar plan comparison can now consume the hosted weekly evidence rather than a
-local report. Editable goals should follow the accepted issue order after the
-owner confirms the Ready and WL weekly values match on one completed live week.
+Calendar plan comparison can now consume the hosted weekly evidence and historical
+goal context rather than a local report. Scheduled priority handovers and evidence
+templates remain the next goal-specific extension after the plan comparison slice.

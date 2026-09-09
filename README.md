@@ -8,10 +8,11 @@ Ready starts with the user’s goal, gathers evidence from Garmin or manual entr
 
 ## Current status
 
-The first six application slices now provide a private, durable owner workspace:
+The first seven application slices now provide a private, durable owner workspace:
 
 - A desktop-first, responsive dashboard.
-- The reference goal stack persisted in SQLite.
+- An editable health, fitness and adventure goal stack in SQLite or Postgres.
+- Explicit current-priority handovers and archive-safe goal history.
 - Manual evidence entry with calories, protein and alcohol kept optional.
 - The agreed neutral readiness vocabulary implemented as deterministic rules.
 - A small goals API and health endpoint for future integrations.
@@ -30,9 +31,15 @@ The first six application slices now provide a private, durable owner workspace:
 - A completed Monday-to-Sunday weekly evidence read.
 - WL-parity weight, waist, activity and recovery calculations.
 - Per-metric coverage so missing Garmin values remain visible and unknown.
+- Pending states that disable slow forms and protect against duplicate submissions.
 
 Ready now covers WL's deterministic weekly evidence layer. Planned-versus-completed
 work and confirmed AI interpretation remain later, separate product slices.
+
+Open `Goals` to create, edit or archive a goal. Ready keeps exactly one active
+current priority. To replace it, edit another goal and choose `Current`; Ready
+moves the previous priority to `Supporting` and records both revisions. Earlier
+weekly reads continue to use the goal target and priority that applied then.
 
 ## Run locally
 

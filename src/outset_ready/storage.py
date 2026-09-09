@@ -4,6 +4,7 @@ import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from datetime import UTC, date, datetime, timedelta
+from math import isfinite
 from pathlib import Path
 from typing import Any, TypeAlias
 from uuid import uuid4
@@ -91,8 +92,28 @@ SCHEMA_STATEMENTS = (
       target_date TEXT,
       supports_goal_id TEXT,
       created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      archived_at TEXT,
       PRIMARY KEY (user_id, id),
       FOREIGN KEY (user_id, supports_goal_id) REFERENCES goals(user_id, id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS goal_revisions (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      id TEXT PRIMARY KEY,
+      goal_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      category TEXT NOT NULL CHECK (category IN ('health', 'fitness', 'adventure')),
+      priority TEXT NOT NULL CHECK (priority IN ('current', 'supporting', 'future')),
+      sort_order INTEGER NOT NULL,
+      target_value REAL,
+      target_unit TEXT,
+      target_date TEXT,
+      supports_goal_id TEXT,
+      archived_at TEXT,
+      effective_from TEXT NOT NULL,
+      created_at TEXT NOT NULL
     )
     """,
     """
@@ -183,6 +204,15 @@ SCHEMA_STATEMENTS = (
 
 INDEX_STATEMENTS = (
     """
+    CREATE UNIQUE INDEX IF NOT EXISTS goals_one_current_active_idx
+      ON goals(user_id)
+      WHERE priority = 'current' AND archived_at IS NULL
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS goal_revisions_user_effective_idx
+      ON goal_revisions(user_id, goal_id, effective_from DESC, created_at DESC)
+    """,
+    """
     CREATE UNIQUE INDEX IF NOT EXISTS daily_observations_user_source_idx
       ON daily_observations(user_id, recorded_on, source)
     """,
@@ -243,10 +273,12 @@ def init_db(
                 _execute(conn, statement)
             if isinstance(conn, sqlite3.Connection):
                 _migrate_legacy_sqlite_tables(conn)
+            _migrate_goal_columns(conn)
             for statement in INDEX_STATEMENTS:
                 _execute(conn, statement)
             ensure_owner(conn, user_id=user_id, email=owner_email)
             seed_reference_goals(conn, user_id=user_id)
+            _ensure_initial_goal_revisions(conn, user_id=user_id)
 
 
 def ensure_owner(conn, *, user_id: str, email: str) -> None:
@@ -269,8 +301,9 @@ def seed_reference_goals(conn, *, user_id: str = DEFAULT_OWNER_ID) -> None:
             """
             INSERT INTO goals (
               user_id, id, title, category, priority, sort_order, target_value,
-              target_unit, target_date, supports_goal_id, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              target_unit, target_date, supports_goal_id, created_at, updated_at,
+              archived_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT DO NOTHING
             """,
             (
@@ -285,36 +318,226 @@ def seed_reference_goals(conn, *, user_id: str = DEFAULT_OWNER_ID) -> None:
                 goal.target_date.isoformat() if goal.target_date else None,
                 goal.supports_goal_id,
                 now,
+                now,
+                None,
             ),
         )
 
 
-def list_goals(conn, *, user_id: str = DEFAULT_OWNER_ID) -> list[Goal]:
+def list_goals(
+    conn,
+    *,
+    user_id: str = DEFAULT_OWNER_ID,
+    include_archived: bool = False,
+) -> list[Goal]:
+    archived_filter = "" if include_archived else "AND archived_at IS NULL"
     rows = _execute(
         conn,
-        """
+        f"""
         SELECT id, title, category, priority, sort_order, target_value,
-               target_unit, target_date, supports_goal_id
+               target_unit, target_date, supports_goal_id, archived_at
         FROM goals
-        WHERE user_id = ?
+        WHERE user_id = ? {archived_filter}
         ORDER BY sort_order, created_at
         """,
         (user_id,),
     ).fetchall()
-    return [
-        Goal(
-            id=row["id"],
-            title=row["title"],
-            category=GoalCategory(row["category"]),
-            priority=GoalPriority(row["priority"]),
-            sort_order=row["sort_order"],
-            target_value=row["target_value"],
-            target_unit=row["target_unit"],
-            target_date=date.fromisoformat(row["target_date"]) if row["target_date"] else None,
-            supports_goal_id=row["supports_goal_id"],
+    return [_goal_from_row(row) for row in rows]
+
+
+def list_goals_as_of(
+    conn,
+    *,
+    effective_at: datetime,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> list[Goal]:
+    rows = _execute(
+        conn,
+        """
+        SELECT goal_id AS id, title, category, priority, sort_order, target_value,
+               target_unit, target_date, supports_goal_id, archived_at
+        FROM (
+          SELECT id AS revision_id, goal_id, title, category, priority, sort_order,
+                 target_value, target_unit, target_date, supports_goal_id,
+                 archived_at,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY goal_id
+                   ORDER BY effective_from DESC, created_at DESC, id DESC
+                 ) AS revision_rank
+          FROM goal_revisions
+          WHERE user_id = ? AND effective_from <= ?
+        ) AS ranked_revisions
+        WHERE revision_rank = 1 AND archived_at IS NULL
+        ORDER BY sort_order, goal_id
+        """,
+        (user_id, effective_at.isoformat()),
+    ).fetchall()
+    return [_goal_from_row(row) for row in rows]
+
+
+def create_goal(
+    conn,
+    *,
+    title: str,
+    category: GoalCategory,
+    priority: GoalPriority,
+    target_value: float | None = None,
+    target_unit: str | None = None,
+    target_date: date | None = None,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> Goal:
+    clean_title, clean_unit = _validate_goal_fields(
+        title=title,
+        target_value=target_value,
+        target_unit=target_unit,
+    )
+    goal_id = f"goal-{uuid4()}"
+    now = _utc_now()
+    with _transaction(conn):
+        if priority is GoalPriority.CURRENT:
+            _demote_current_goals(conn, user_id=user_id, except_goal_id=None, now=now)
+        row = _execute(
+            conn,
+            "SELECT COALESCE(MAX(sort_order), 0) AS maximum FROM goals WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        sort_order = int(row["maximum"]) + 10
+        _execute(
+            conn,
+            """
+            INSERT INTO goals (
+              user_id, id, title, category, priority, sort_order, target_value,
+              target_unit, target_date, supports_goal_id, created_at, updated_at,
+              archived_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                user_id,
+                goal_id,
+                clean_title,
+                category.value,
+                priority.value,
+                sort_order,
+                target_value,
+                clean_unit,
+                target_date.isoformat() if target_date else None,
+                None,
+                now,
+                now,
+                None,
+            ),
         )
-        for row in rows
-    ]
+        _record_goal_revision(conn, user_id=user_id, goal_id=goal_id, effective_from=now)
+    return fetch_goal(conn, goal_id=goal_id, user_id=user_id)
+
+
+def update_goal(
+    conn,
+    *,
+    goal_id: str,
+    title: str,
+    category: GoalCategory,
+    priority: GoalPriority,
+    target_value: float | None = None,
+    target_unit: str | None = None,
+    target_date: date | None = None,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> Goal:
+    clean_title, clean_unit = _validate_goal_fields(
+        title=title,
+        target_value=target_value,
+        target_unit=target_unit,
+    )
+    now = _utc_now()
+    with _transaction(conn):
+        existing_goal = fetch_goal(conn, goal_id=goal_id, user_id=user_id)
+        if (
+            existing_goal.priority is GoalPriority.CURRENT
+            and priority is not GoalPriority.CURRENT
+        ):
+            raise ValueError(
+                "Choose a different current goal before changing this priority."
+            )
+        if priority is GoalPriority.CURRENT:
+            _demote_current_goals(
+                conn,
+                user_id=user_id,
+                except_goal_id=goal_id,
+                now=now,
+            )
+        cursor = _execute(
+            conn,
+            """
+            UPDATE goals
+            SET title = ?, category = ?, priority = ?, target_value = ?,
+                target_unit = ?, target_date = ?, updated_at = ?
+            WHERE user_id = ? AND id = ? AND archived_at IS NULL
+            """,
+            (
+                clean_title,
+                category.value,
+                priority.value,
+                target_value,
+                clean_unit,
+                target_date.isoformat() if target_date else None,
+                now,
+                user_id,
+                goal_id,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise LookupError("That active goal does not exist.")
+        _record_goal_revision(conn, user_id=user_id, goal_id=goal_id, effective_from=now)
+    return fetch_goal(conn, goal_id=goal_id, user_id=user_id)
+
+
+def archive_goal(
+    conn,
+    *,
+    goal_id: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> Goal:
+    now = _utc_now()
+    with _transaction(conn):
+        goal = fetch_goal(conn, goal_id=goal_id, user_id=user_id)
+        if goal.priority is GoalPriority.CURRENT:
+            raise ValueError("Choose a different current goal before archiving this one.")
+        cursor = _execute(
+            conn,
+            """
+            UPDATE goals
+            SET archived_at = ?, updated_at = ?
+            WHERE user_id = ? AND id = ? AND archived_at IS NULL
+            """,
+            (now, now, user_id, goal_id),
+        )
+        if cursor.rowcount != 1:
+            raise LookupError("That active goal does not exist.")
+        _record_goal_revision(conn, user_id=user_id, goal_id=goal_id, effective_from=now)
+    return fetch_goal(conn, goal_id=goal_id, user_id=user_id, include_archived=True)
+
+
+def fetch_goal(
+    conn,
+    *,
+    goal_id: str,
+    user_id: str = DEFAULT_OWNER_ID,
+    include_archived: bool = False,
+) -> Goal:
+    archived_filter = "" if include_archived else "AND archived_at IS NULL"
+    row = _execute(
+        conn,
+        f"""
+        SELECT id, title, category, priority, sort_order, target_value,
+               target_unit, target_date, supports_goal_id, archived_at
+        FROM goals
+        WHERE user_id = ? AND id = ? {archived_filter}
+        """,
+        (user_id, goal_id),
+    ).fetchone()
+    if row is None:
+        raise LookupError("That goal does not exist.")
+    return _goal_from_row(row)
 
 
 def add_manual_evidence(
@@ -1010,6 +1233,175 @@ def database_is_ready(target: DatabaseTarget) -> bool:
     return True
 
 
+def _goal_from_row(row) -> Goal:
+    return Goal(
+        id=row["id"],
+        title=row["title"],
+        category=GoalCategory(row["category"]),
+        priority=GoalPriority(row["priority"]),
+        sort_order=row["sort_order"],
+        target_value=row["target_value"],
+        target_unit=row["target_unit"],
+        target_date=(
+            date.fromisoformat(row["target_date"]) if row["target_date"] else None
+        ),
+        supports_goal_id=row["supports_goal_id"],
+        archived_at=(
+            datetime.fromisoformat(row["archived_at"])
+            if row["archived_at"]
+            else None
+        ),
+    )
+
+
+def _validate_goal_fields(
+    *,
+    title: str,
+    target_value: float | None,
+    target_unit: str | None,
+) -> tuple[str, str | None]:
+    clean_title = title.strip()
+    clean_unit = target_unit.strip() if target_unit and target_unit.strip() else None
+    if not clean_title:
+        raise ValueError("Give the goal a name.")
+    if len(clean_title) > 120:
+        raise ValueError("Keep the goal name to 120 characters or fewer.")
+    if target_value is not None and (
+        not isfinite(target_value) or target_value <= 0
+    ):
+        raise ValueError("A target value must be greater than zero.")
+    if (target_value is None) != (clean_unit is None):
+        raise ValueError("Add both a target value and its unit, or leave both blank.")
+    if clean_unit and len(clean_unit) > 24:
+        raise ValueError("Keep the target unit to 24 characters or fewer.")
+    return clean_title, clean_unit
+
+
+def _demote_current_goals(
+    conn,
+    *,
+    user_id: str,
+    except_goal_id: str | None,
+    now: str,
+) -> None:
+    parameters: tuple[Any, ...]
+    excluding = ""
+    if except_goal_id is None:
+        parameters = (
+            GoalPriority.SUPPORTING.value,
+            now,
+            user_id,
+            GoalPriority.CURRENT.value,
+        )
+    else:
+        excluding = "AND id != ?"
+        parameters = (
+            GoalPriority.SUPPORTING.value,
+            now,
+            user_id,
+            GoalPriority.CURRENT.value,
+            except_goal_id,
+        )
+    rows = _execute(
+        conn,
+        f"""
+        SELECT id
+        FROM goals
+        WHERE user_id = ? AND priority = ? AND archived_at IS NULL {excluding}
+        """,
+        parameters[2:],
+    ).fetchall()
+    if not rows:
+        return
+    _execute(
+        conn,
+        f"""
+        UPDATE goals
+        SET priority = ?, updated_at = ?
+        WHERE user_id = ? AND priority = ? AND archived_at IS NULL {excluding}
+        """,
+        parameters,
+    )
+    for row in rows:
+        _record_goal_revision(
+            conn,
+            user_id=user_id,
+            goal_id=row["id"],
+            effective_from=now,
+        )
+
+
+def _record_goal_revision(
+    conn,
+    *,
+    user_id: str,
+    goal_id: str,
+    effective_from: str,
+) -> None:
+    row = _execute(
+        conn,
+        """
+        SELECT id, title, category, priority, sort_order, target_value,
+               target_unit, target_date, supports_goal_id, archived_at
+        FROM goals
+        WHERE user_id = ? AND id = ?
+        """,
+        (user_id, goal_id),
+    ).fetchone()
+    if row is None:
+        raise LookupError("That goal does not exist.")
+    _execute(
+        conn,
+        """
+        INSERT INTO goal_revisions (
+          user_id, id, goal_id, title, category, priority, sort_order,
+          target_value, target_unit, target_date, supports_goal_id, archived_at,
+          effective_from, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            user_id,
+            str(uuid4()),
+            goal_id,
+            row["title"],
+            row["category"],
+            row["priority"],
+            row["sort_order"],
+            row["target_value"],
+            row["target_unit"],
+            row["target_date"],
+            row["supports_goal_id"],
+            row["archived_at"],
+            effective_from,
+            _utc_now(),
+        ),
+    )
+
+
+def _ensure_initial_goal_revisions(conn, *, user_id: str) -> None:
+    rows = _execute(
+        conn,
+        """
+        SELECT goals.id, goals.created_at
+        FROM goals
+        WHERE goals.user_id = ?
+          AND NOT EXISTS (
+            SELECT 1 FROM goal_revisions
+            WHERE goal_revisions.user_id = goals.user_id
+              AND goal_revisions.goal_id = goals.id
+          )
+        """,
+        (user_id,),
+    ).fetchall()
+    for row in rows:
+        _record_goal_revision(
+            conn,
+            user_id=user_id,
+            goal_id=row["id"],
+            effective_from=row["created_at"],
+        )
+
+
 def _evidence_record_from_row(row) -> EvidenceRecord:
     return EvidenceRecord(
         id=row["id"],
@@ -1080,6 +1472,7 @@ def _migrate_legacy_sqlite_tables(conn: sqlite3.Connection) -> None:
         "activities",
         "connector_syncs",
         "connector_connections",
+        "goal_revisions",
     ):
         columns = {
             row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
@@ -1088,6 +1481,24 @@ def _migrate_legacy_sqlite_tables(conn: sqlite3.Connection) -> None:
             conn.execute(
                 f"ALTER TABLE {table} ADD COLUMN user_id TEXT NOT NULL DEFAULT 'owner'"
             )
+
+
+def _migrate_goal_columns(conn) -> None:
+    if isinstance(conn, sqlite3.Connection):
+        columns = {
+            row["name"] for row in conn.execute("PRAGMA table_info(goals)").fetchall()
+        }
+        if "updated_at" not in columns:
+            conn.execute("ALTER TABLE goals ADD COLUMN updated_at TEXT")
+        if "archived_at" not in columns:
+            conn.execute("ALTER TABLE goals ADD COLUMN archived_at TEXT")
+    else:
+        _execute(conn, "ALTER TABLE goals ADD COLUMN IF NOT EXISTS updated_at TEXT")
+        _execute(conn, "ALTER TABLE goals ADD COLUMN IF NOT EXISTS archived_at TEXT")
+    _execute(
+        conn,
+        "UPDATE goals SET updated_at = created_at WHERE updated_at IS NULL",
+    )
 
 
 def _utc_now() -> str:
