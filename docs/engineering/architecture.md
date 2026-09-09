@@ -27,7 +27,30 @@ The second slice moves the proven WL integration behind Ready-owned boundaries:
 4. SQLite keys daily observations by date and source, and activities by source and external ID, so repeated syncs remain idempotent.
 5. The dashboard reports the last Garmin sync and shows recent imported activities.
 
-The web application never receives Garmin credentials. The local CLI reads them from `.env` and passes them to the connector.
+The web application never receives Garmin passwords. The local CLI reads them from
+`.env`, handles MFA in one process and exports only the reusable token bundle.
+
+## Hosted Garmin connection
+
+The private-owner deployment bridges Garmin's stateful MFA flow without placing a
+password in Vercel:
+
+1. The local CLI authenticates and writes an owner-readable token JSON file.
+2. The owner-only Connections form checks CSRF and validates the upload structure.
+3. Ready encrypts the canonical token fields with a dedicated Fernet key and stores
+   the ciphertext in Postgres.
+4. `Sync now` decrypts the token, fetches seven days of normalised evidence and
+   writes refreshed token material back to Postgres.
+5. An explicit Garmin authentication rejection changes the connection to
+   `reconnect_required`; transient failures keep the saved connection available.
+
+Hosted sync does not use Vercel's temporary filesystem for authoritative data or
+raw payload history. Postgres holds normalised evidence, sync history and encrypted
+token material. Vercel gives the FastAPI function a 120-second cap to prevent a
+stalled Garmin request from running without a bound.
+
+Issue #24 tracks official Garmin approval and the supported multi-user integration.
+The private token bridge must not expand beyond the owner account.
 
 ## Private owner and deployment boundary
 
@@ -92,6 +115,6 @@ Missing optional context must never force `Building a picture`. That state shoul
 
 ## Immediate follow-on
 
-The next slice should connect Garmin from the authenticated browser, support MFA,
-discard the Garmin password after connection and encrypt reusable token material
-in durable storage. WL insight parity follows that hosted connection.
+The next slice should bring the deterministic weekly calculations and report inputs
+across from WL. Calendar plan comparison and the confirmed weekly review can then
+consume the hosted Garmin evidence rather than a local report.

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from outset_ready.auth import hash_password
+from outset_ready.credentials import generate_credential_encryption_key
 
 
 def test_root_entrypoint_exports_working_fastapi_app(monkeypatch, tmp_path):
@@ -19,6 +20,10 @@ def test_root_entrypoint_exports_working_fastapi_app(monkeypatch, tmp_path):
     monkeypatch.setenv(
         "OUTSET_READY_SESSION_SECRET",
         "a-test-session-secret-that-is-long-enough",
+    )
+    monkeypatch.setenv(
+        "OUTSET_READY_CREDENTIAL_ENCRYPTION_KEY",
+        generate_credential_encryption_key(),
     )
     entrypoint = Path(__file__).parents[1] / "app.py"
     spec = importlib.util.spec_from_file_location("vercel_entrypoint", entrypoint)

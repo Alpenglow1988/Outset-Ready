@@ -3,7 +3,9 @@ from datetime import date
 import pytest
 
 from outset_ready.connectors.garmin.client import (
+    GarminAuthenticationRequiredError,
     GarminClient,
+    GarminConnectorError,
     MissingGarminCredentialsError,
     OptionalGarminEndpointUnavailable,
 )
@@ -95,3 +97,76 @@ def test_missing_optional_endpoint_has_specific_error(monkeypatch, tmp_path):
     with pytest.raises(OptionalGarminEndpointUnavailable, match="HRV"):
         client.fetch_hrv(date(2026, 9, 3))
 
+
+def test_login_accepts_inline_token_and_exports_rotated_token(monkeypatch, tmp_path):
+    calls = {}
+
+    class FakeInternalClient:
+        def dumps(self):
+            return (
+                '{"di_token":"new-access","di_refresh_token":"new-refresh",'
+                '"di_client_id":"client"}'
+            )
+
+    class FakeGarmin:
+        def __init__(self, *args, **kwargs):
+            calls["init"] = (args, kwargs)
+            self.client = FakeInternalClient()
+
+        def login(self, tokenstore=None):
+            calls["tokenstore"] = tokenstore
+
+    monkeypatch.setattr("outset_ready.connectors.garmin.client.Garmin", FakeGarmin)
+    client = GarminClient(settings(tmp_path, email=None, password=None))
+    original = (
+        '{"di_token":"access","di_refresh_token":"refresh",'
+        '"di_client_id":"client"}'
+    )
+
+    client.login(token_bundle=original)
+
+    assert calls["init"] == ((), {})
+    assert "refresh" in calls["tokenstore"]
+    assert "new-refresh" in client.export_token_bundle()
+
+
+def test_inline_token_login_failure_requests_reconnection(monkeypatch, tmp_path):
+    class GarminConnectAuthenticationError(RuntimeError):
+        pass
+
+    class FakeGarmin:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def login(self, tokenstore=None):
+            raise GarminConnectAuthenticationError("API Error 401")
+
+    monkeypatch.setattr("outset_ready.connectors.garmin.client.Garmin", FakeGarmin)
+    client = GarminClient(settings(tmp_path, email=None, password=None))
+    token = (
+        '{"di_token":"access","di_refresh_token":"refresh",'
+        '"di_client_id":"client"}'
+    )
+
+    with pytest.raises(GarminAuthenticationRequiredError, match="Reconnect Garmin"):
+        client.login(token_bundle=token)
+
+
+def test_inline_token_transient_failure_keeps_connection_reusable(monkeypatch, tmp_path):
+    class FakeGarmin:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def login(self, tokenstore=None):
+            raise RuntimeError("API Error 503")
+
+    monkeypatch.setattr("outset_ready.connectors.garmin.client.Garmin", FakeGarmin)
+    client = GarminClient(settings(tmp_path, email=None, password=None))
+    token = (
+        '{"di_token":"access","di_refresh_token":"refresh",'
+        '"di_client_id":"client"}'
+    )
+
+    with pytest.raises(GarminConnectorError, match="could not verify") as error:
+        client.login(token_bundle=token)
+    assert not isinstance(error.value, GarminAuthenticationRequiredError)

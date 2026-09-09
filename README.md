@@ -8,7 +8,7 @@ Ready starts with the user’s goal, gathers evidence from Garmin or manual entr
 
 ## Current status
 
-The first three application slices are now in place, with the private owner foundation under review:
+The first five application slices now provide a private, durable owner workspace:
 
 - A desktop-first, responsive dashboard.
 - The reference goal stack persisted in SQLite.
@@ -23,8 +23,11 @@ The first three application slices are now in place, with the private owner foun
 - User-scoped goals, evidence, activities and connector history.
 - SQLite for local development and managed Postgres for durable production data.
 - A private Connections screen and separate application/database health checks.
+- Local Garmin MFA authentication with a safe token-file export.
+- Owner-only token upload, encrypted Neon storage and hosted `Sync now`.
+- Refreshed Garmin token persistence without new Vercel variables or deployments.
 
-Hosted Garmin connection is the next parity slice. Weekly insight parity with WL follows it.
+Weekly insight parity with WL follows the hosted connection.
 
 ## Run locally
 
@@ -35,14 +38,16 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
 outset-ready hash-password
+outset-ready generate-encryption-key
 ```
 
-Store the printed hash and two other private settings in your shell or local secret manager:
+Store the printed hash and the two generated secrets in your shell or local secret manager:
 
 ```bash
 export OUTSET_READY_OWNER_EMAIL='your-email@example.com'
 export OUTSET_READY_OWNER_PASSWORD_HASH='scrypt$...'
 export OUTSET_READY_SESSION_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+export OUTSET_READY_CREDENTIAL_ENCRYPTION_KEY='the-generated-key'
 python -m uvicorn outset_ready.web:create_app --factory --reload
 ```
 
@@ -69,13 +74,15 @@ refuses to start with temporary SQLite storage. Before merging this build:
 2. Set `OUTSET_READY_DATABASE_URL` to the provider's Postgres connection value.
 3. Add `OUTSET_READY_OWNER_EMAIL`, `OUTSET_READY_OWNER_PASSWORD_HASH` and
    `OUTSET_READY_SESSION_SECRET` to the Production environment only.
-4. Confirm the values are not exposed to Preview or Development unless intended.
+4. Generate `OUTSET_READY_CREDENTIAL_ENCRYPTION_KEY` with
+   `outset-ready generate-encryption-key` and add it to Production.
+5. Confirm the values are not exposed to Preview or Development unless intended.
 
 `vercel.json` tells Vercel to ignore every branch except `main`. Build and test
 review branches locally and in GitHub Actions, then allow one production deploy
 when the reviewed PR is merged.
 
-## Connect Garmin locally
+## Connect Garmin
 
 The current local connector can still read Garmin credentials from a private
 local environment file:
@@ -84,13 +91,22 @@ local environment file:
 cp .env.example .env
 ```
 
-Set `GARMIN_EMAIL` and `GARMIN_PASSWORD` in `.env`, then start with a short sync:
+Set `GARMIN_EMAIL` and `GARMIN_PASSWORD` in `.env`, then generate the upload file:
 
 ```bash
-python -m outset_ready.cli sync-garmin --days 3
+python -m outset_ready.cli export-garmin-token
 ```
 
-Garmin may request an MFA code during the first login. Ready stores reusable Garmin tokens in `~/.garminconnect` by default. A normal weekly refresh uses:
+Garmin may request an MFA code. The command writes `data/garmin-token.json` with
+owner-only file permissions and never prints its contents. Sign in to Ready, open
+Connections, upload the file and select `Sync now`. Remove the exported file after
+Ready accepts it.
+
+Ready encrypts the reusable token bundle before storing it in Postgres. Each hosted
+sync saves any refreshed token material back to Postgres. Garmin passwords remain
+local and never enter the website, Postgres or Vercel.
+
+The local-only sync remains available for debugging:
 
 ```bash
 python -m outset_ready.cli sync-garmin --days 7
@@ -98,9 +114,9 @@ python -m outset_ready.cli sync-garmin --days 7
 
 Ready stores the SQLite database and raw Garmin payloads under `data/`. Git ignores that directory. Do not commit `.env`, the database, raw payloads or Garmin tokens.
 
-Build #5 will replace this local credential step with an authenticated browser
-connection. It will discard the Garmin password after login and store encrypted
-reusable token material in the durable database.
+The private-owner connector uses Garmin's unofficial account interface. Issue #24
+tracks approval and migration to Garmin's supported API before Ready serves other
+users.
 
 ## Product principles
 

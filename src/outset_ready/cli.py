@@ -3,11 +3,14 @@ from __future__ import annotations
 import argparse
 import getpass
 from datetime import date
+from pathlib import Path
 
 from outset_ready.auth import hash_password
 from outset_ready.connectors.garmin.client import GarminConnectorError
 from outset_ready.connectors.garmin.config import load_garmin_settings
 from outset_ready.connectors.garmin.sync import sync_garmin
+from outset_ready.connectors.garmin.tokens import write_token_bundle
+from outset_ready.credentials import generate_credential_encryption_key
 
 
 def prompt_mfa() -> str:
@@ -29,6 +32,19 @@ def build_parser() -> argparse.ArgumentParser:
         "hash-password",
         help="Generate the owner password hash for application settings.",
     )
+    export_parser = subparsers.add_parser(
+        "export-garmin-token",
+        help="Authenticate locally and export a token file for hosted Ready.",
+    )
+    export_parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("data/garmin-token.json"),
+    )
+    subparsers.add_parser(
+        "generate-encryption-key",
+        help="Generate the application credential encryption key.",
+    )
     return parser
 
 
@@ -45,6 +61,25 @@ def main(argv: list[str] | None = None) -> int:
         except ValueError as exc:
             print(exc)
             return 1
+        return 0
+
+    if args.command == "generate-encryption-key":
+        print(generate_credential_encryption_key())
+        return 0
+
+    if args.command == "export-garmin-token":
+        settings = load_garmin_settings()
+        from outset_ready.connectors.garmin.client import GarminClient
+
+        client = GarminClient(settings)
+        try:
+            client.login(prompt_mfa=prompt_mfa)
+            output_path = write_token_bundle(args.output, client.export_token_bundle())
+        except (GarminConnectorError, ValueError, OSError) as exc:
+            print(f"Garmin token export failed: {exc}")
+            return 1
+        print(f"Garmin token written to {output_path}")
+        print("Upload this file through Ready, then remove the local export.")
         return 0
 
     if args.command != "sync-garmin":

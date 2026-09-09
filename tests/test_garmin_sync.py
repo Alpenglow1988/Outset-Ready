@@ -5,7 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from outset_ready.connectors.garmin.client import MissingGarminCredentialsError
+from outset_ready.connectors.garmin.client import (
+    GarminAuthenticationRequiredError,
+    MissingGarminCredentialsError,
+)
 from outset_ready.connectors.garmin.config import GarminSettings
 from outset_ready.connectors.garmin.sync import sync_garmin
 from outset_ready.domain import ConnectorSyncStatus
@@ -36,8 +39,9 @@ class FixtureClient:
         self.activity_start_date = None
         self.page_size = None
 
-    def login(self, prompt_mfa=None):
+    def login(self, prompt_mfa=None, *, token_bundle=None):
         self.prompt_mfa = prompt_mfa
+        self.token_bundle = token_bundle
 
     def fetch_user_summary(self, payload_date):
         return {**self.daily["user_summary"], "calendarDate": payload_date.isoformat()}
@@ -119,7 +123,7 @@ def test_login_failure_is_recorded_without_exposing_credentials(tmp_path):
         def __init__(self, _settings):
             pass
 
-        def login(self, prompt_mfa=None):
+        def login(self, prompt_mfa=None, *, token_bundle=None):
             raise MissingGarminCredentialsError("credentials missing")
 
     with pytest.raises(MissingGarminCredentialsError):
@@ -133,6 +137,27 @@ def test_login_failure_is_recorded_without_exposing_credentials(tmp_path):
         latest = fetch_latest_connector_sync(conn, "garmin")
     assert latest is not None
     assert latest.status is ConnectorSyncStatus.FAILED
-    assert latest.error_message == "credentials missing"
+    assert latest.error_message == "Garmin sync could not finish."
     assert "secret" not in latest.error_message
 
+
+def test_authentication_failure_during_endpoint_stops_sync(tmp_path):
+    garmin_settings = settings(tmp_path)
+
+    class ExpiredClient(FixtureClient):
+        def fetch_user_summary(self, payload_date):
+            raise GarminAuthenticationRequiredError("expired")
+
+    with pytest.raises(GarminAuthenticationRequiredError):
+        sync_garmin(
+            garmin_settings,
+            days=1,
+            end_date=date(2026, 9, 3),
+            client_factory=ExpiredClient,
+        )
+
+    with connect(garmin_settings.db_path) as conn:
+        latest = fetch_latest_connector_sync(conn, "garmin")
+    assert latest is not None
+    assert latest.status is ConnectorSyncStatus.FAILED
+    assert latest.error_message == "Garmin requires reconnection."

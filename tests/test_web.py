@@ -4,14 +4,27 @@ import pytest
 from fastapi.testclient import TestClient
 
 from outset_ready.auth import hash_password
+from outset_ready.connectors.garmin.client import GarminAuthenticationRequiredError
+from outset_ready.credentials import CredentialCipher, generate_credential_encryption_key
+from outset_ready.domain import ConnectorConnectionStatus
 from outset_ready.settings import AppSettings
-from outset_ready.storage import connect, list_recent_evidence
+from outset_ready.storage import (
+    connect,
+    fetch_connector_connection,
+    list_recent_evidence,
+    load_connector_credentials,
+)
 from outset_ready.web import create_app
 
 
 OWNER_EMAIL = "ian@example.com"
 OWNER_PASSWORD = "a-long-test-password"
 OWNER_PASSWORD_HASH = hash_password(OWNER_PASSWORD)
+ENCRYPTION_KEY = generate_credential_encryption_key()
+VALID_TOKEN = (
+    '{"di_token":"access","di_refresh_token":"refresh",'
+    '"di_client_id":"client"}'
+)
 
 
 @pytest.fixture
@@ -21,6 +34,7 @@ def settings(tmp_path):
         owner_email=OWNER_EMAIL,
         owner_password_hash=OWNER_PASSWORD_HASH,
         session_secret="test-session-secret-that-is-long-enough",
+        credential_encryption_key=ENCRYPTION_KEY,
         secure_cookies=False,
     )
 
@@ -160,7 +174,129 @@ def test_connections_page_is_private_and_reports_current_boundary(client):
 
     assert response.status_code == 200
     assert "Not connected" in response.text
-    assert "Browser connection and MFA arrive in Build #5" in response.text
+    assert "export-garmin-token" in response.text
+
+
+def test_owner_can_upload_encrypted_garmin_token(client, settings):
+    sign_in(client)
+    page = client.get("/connections")
+
+    response = client.post(
+        "/connections/garmin/token",
+        data={"csrf_token": csrf_from(page)},
+        files={
+            "token_file": (
+                "garmin-token.json",
+                VALID_TOKEN.encode("utf-8"),
+                "application/json",
+            )
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/connections?notice=garmin-token-saved"
+    with connect(settings.database_target) as conn:
+        connection = fetch_connector_connection(conn, connector="garmin")
+        encrypted = load_connector_credentials(conn, connector="garmin")
+    assert connection is not None
+    assert connection.status is ConnectorConnectionStatus.TOKEN_SAVED
+    assert encrypted is not None
+    assert "refresh" not in encrypted
+    assert "di_refresh_token" in CredentialCipher(ENCRYPTION_KEY).decrypt(encrypted)
+    connection_page = client.get(response.headers["location"])
+    assert "Garmin token saved" in connection_page.text
+    assert "Sync now" in connection_page.text
+
+
+def test_garmin_token_upload_rejects_invalid_file_and_csrf(client, settings):
+    sign_in(client)
+    page = client.get("/connections")
+    invalid_file = {"token_file": ("token.json", b"{}", "application/json")}
+
+    bad_csrf = client.post(
+        "/connections/garmin/token",
+        data={"csrf_token": "wrong"},
+        files=invalid_file,
+    )
+    invalid_file = {"token_file": ("token.json", b"{}", "application/json")}
+    bad_token = client.post(
+        "/connections/garmin/token",
+        data={"csrf_token": csrf_from(page)},
+        files=invalid_file,
+    )
+
+    assert bad_csrf.status_code == 403
+    assert bad_token.status_code == 400
+    assert "reusable token fields" in bad_token.text
+    with connect(settings.database_target) as conn:
+        assert fetch_connector_connection(conn, connector="garmin") is None
+
+
+def test_owner_can_start_hosted_sync(client, monkeypatch):
+    sign_in(client)
+    page = client.get("/connections")
+    calls = []
+    monkeypatch.setattr(
+        "outset_ready.web.sync_hosted_garmin",
+        lambda settings, *, user_id: calls.append((settings, user_id)),
+    )
+
+    response = client.post(
+        "/connections/garmin/sync",
+        data={"csrf_token": csrf_from(page)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/connections?notice=garmin-sync-complete"
+    assert calls[0][1] == "owner"
+
+
+def test_owner_can_remove_garmin_connection(client, settings):
+    sign_in(client)
+    page = client.get("/connections")
+    client.post(
+        "/connections/garmin/token",
+        data={"csrf_token": csrf_from(page)},
+        files={
+            "token_file": (
+                "garmin-token.json",
+                VALID_TOKEN.encode("utf-8"),
+                "application/json",
+            )
+        },
+    )
+    connected_page = client.get("/connections")
+
+    response = client.post(
+        "/connections/garmin/disconnect",
+        data={"csrf_token": csrf_from(connected_page)},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/connections?notice=garmin-disconnected"
+    with connect(settings.database_target) as conn:
+        assert fetch_connector_connection(conn, connector="garmin") is None
+
+
+def test_hosted_sync_reports_reconnect_without_exposing_detail(client, monkeypatch):
+    sign_in(client)
+    page = client.get("/connections")
+
+    def reject(_settings, *, user_id):
+        raise GarminAuthenticationRequiredError("sensitive remote detail")
+
+    monkeypatch.setattr("outset_ready.web.sync_hosted_garmin", reject)
+    response = client.post(
+        "/connections/garmin/sync",
+        data={"csrf_token": csrf_from(page)},
+    )
+
+    assert response.status_code == 409
+    assert "new token file" in response.text
+    assert "sensitive remote detail" not in response.text
 
 
 def test_logout_clears_owner_session(client):
@@ -202,7 +338,12 @@ def test_tampered_session_cookie_does_not_authenticate(client):
     sign_in(client)
     cookie = client.cookies.get("outset_ready_session")
     assert cookie
-    client.cookies.set("outset_ready_session", cookie[:-1] + "x")
+    payload, signature = cookie.split(".", 1)
+    replacement = "A" if signature[0] != "A" else "B"
+    client.cookies.set(
+        "outset_ready_session",
+        f"{payload}.{replacement}{signature[1:]}",
+    )
 
     response = client.get("/", follow_redirects=False)
 
@@ -215,6 +356,7 @@ def test_production_session_cookie_is_secure(settings):
         owner_email=settings.owner_email,
         owner_password_hash=settings.owner_password_hash,
         session_secret=settings.session_secret,
+        credential_encryption_key=settings.credential_encryption_key,
         secure_cookies=True,
     )
     with TestClient(

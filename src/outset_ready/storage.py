@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any, TypeAlias
 from uuid import uuid4
@@ -11,6 +11,8 @@ from uuid import uuid4
 from outset_ready.domain import (
     ActivityRecord,
     ActivityType,
+    ConnectorConnection,
+    ConnectorConnectionStatus,
     ConnectorSync,
     ConnectorSyncStatus,
     DailyObservation,
@@ -27,6 +29,11 @@ from outset_ready.domain import (
 
 DatabaseTarget: TypeAlias = str | Path
 DEFAULT_OWNER_ID = "owner"
+CONNECTOR_SYNC_STALE_AFTER = timedelta(minutes=5)
+
+
+class ConnectorSyncAlreadyRunning(RuntimeError):
+    """Raised when one owner starts the same connector twice."""
 
 REFERENCE_GOALS = (
     Goal(
@@ -159,6 +166,19 @@ SCHEMA_STATEMENTS = (
       error_message TEXT
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS connector_connections (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      connector TEXT NOT NULL,
+      encrypted_credentials TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (
+        status IN ('token_saved', 'connected', 'reconnect_required')
+      ),
+      connected_at TEXT,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, connector)
+    )
+    """,
 )
 
 INDEX_STATEMENTS = (
@@ -181,6 +201,11 @@ INDEX_STATEMENTS = (
     """
     CREATE INDEX IF NOT EXISTS connector_syncs_user_started_at_idx
       ON connector_syncs(user_id, connector, started_at DESC)
+    """,
+    """
+    CREATE UNIQUE INDEX IF NOT EXISTS connector_syncs_one_running_idx
+      ON connector_syncs(user_id, connector)
+      WHERE status = 'running'
     """,
 )
 
@@ -545,24 +570,49 @@ def start_connector_sync(
     user_id: str = DEFAULT_OWNER_ID,
 ) -> str:
     sync_id = str(uuid4())
+    now = datetime.now(UTC)
+    stale_before = now - CONNECTOR_SYNC_STALE_AFTER
     with _transaction(conn):
         _execute(
+            conn,
+            """
+            UPDATE connector_syncs
+            SET status = ?, finished_at = ?, error_message = ?
+            WHERE user_id = ? AND connector = ? AND status = ?
+              AND started_at < ?
+            """,
+            (
+                ConnectorSyncStatus.FAILED.value,
+                now.isoformat(),
+                "Previous Garmin sync did not finish.",
+                user_id,
+                connector,
+                ConnectorSyncStatus.RUNNING.value,
+                stale_before.isoformat(),
+            ),
+        )
+        cursor = _execute(
             conn,
             """
             INSERT INTO connector_syncs (
               user_id, id, connector, status, started_at, start_date, end_date
             ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT DO NOTHING
             """,
             (
                 user_id,
                 sync_id,
                 connector,
                 ConnectorSyncStatus.RUNNING.value,
-                _utc_now(),
+                now.isoformat(),
                 start_date.isoformat(),
                 end_date.isoformat(),
             ),
         )
+        if cursor.rowcount != 1:
+            raise ConnectorSyncAlreadyRunning(
+                f"A {connector} sync is already running."
+            )
     return sync_id
 
 
@@ -637,6 +687,180 @@ def fetch_latest_connector_sync(
     )
 
 
+def save_connector_credentials(
+    conn,
+    *,
+    connector: str,
+    encrypted_credentials: str,
+    status: ConnectorConnectionStatus = ConnectorConnectionStatus.TOKEN_SAVED,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> None:
+    if not connector.strip():
+        raise ValueError("A connector name is required.")
+    if not encrypted_credentials:
+        raise ValueError("Encrypted connector credentials cannot be empty.")
+    now = _utc_now()
+    connected_at = now if status is ConnectorConnectionStatus.CONNECTED else None
+    with _transaction(conn):
+        _execute(
+            conn,
+            """
+            INSERT INTO connector_connections (
+              user_id, connector, encrypted_credentials, status,
+              connected_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(user_id, connector) DO UPDATE SET
+              encrypted_credentials = excluded.encrypted_credentials,
+              status = excluded.status,
+              connected_at = excluded.connected_at,
+              updated_at = excluded.updated_at
+            """,
+            (
+                user_id,
+                connector,
+                encrypted_credentials,
+                status.value,
+                connected_at,
+                now,
+            ),
+        )
+
+
+def update_connector_credentials(
+    conn,
+    *,
+    connector: str,
+    encrypted_credentials: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> None:
+    if not encrypted_credentials:
+        raise ValueError("Encrypted connector credentials cannot be empty.")
+    with _transaction(conn):
+        cursor = _execute(
+            conn,
+            """
+            UPDATE connector_connections
+            SET encrypted_credentials = ?, updated_at = ?
+            WHERE user_id = ? AND connector = ?
+            """,
+            (encrypted_credentials, _utc_now(), user_id, connector),
+        )
+        if cursor.rowcount != 1:
+            raise LookupError(f"No saved {connector} connection exists.")
+
+
+def mark_connector_connected(
+    conn,
+    *,
+    connector: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> None:
+    now = _utc_now()
+    with _transaction(conn):
+        _execute(
+            conn,
+            """
+            UPDATE connector_connections
+            SET status = ?, connected_at = ?, updated_at = ?
+            WHERE user_id = ? AND connector = ?
+            """,
+            (
+                ConnectorConnectionStatus.CONNECTED.value,
+                now,
+                now,
+                user_id,
+                connector,
+            ),
+        )
+
+
+def mark_connector_reconnect_required(
+    conn,
+    *,
+    connector: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> None:
+    with _transaction(conn):
+        _execute(
+            conn,
+            """
+            UPDATE connector_connections
+            SET status = ?, updated_at = ?
+            WHERE user_id = ? AND connector = ?
+            """,
+            (
+                ConnectorConnectionStatus.RECONNECT_REQUIRED.value,
+                _utc_now(),
+                user_id,
+                connector,
+            ),
+        )
+
+
+def load_connector_credentials(
+    conn,
+    *,
+    connector: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> str | None:
+    row = _execute(
+        conn,
+        """
+        SELECT encrypted_credentials
+        FROM connector_connections
+        WHERE user_id = ? AND connector = ?
+        """,
+        (user_id, connector),
+    ).fetchone()
+    return row["encrypted_credentials"] if row else None
+
+
+def delete_connector_connection(
+    conn,
+    *,
+    connector: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> None:
+    with _transaction(conn):
+        _execute(
+            conn,
+            """
+            DELETE FROM connector_connections
+            WHERE user_id = ? AND connector = ?
+            """,
+            (user_id, connector),
+        )
+
+
+def fetch_connector_connection(
+    conn,
+    *,
+    connector: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> ConnectorConnection | None:
+    row = _execute(
+        conn,
+        """
+        SELECT connector, status, connected_at, updated_at
+        FROM connector_connections
+        WHERE user_id = ? AND connector = ?
+        """,
+        (user_id, connector),
+    ).fetchone()
+    if row is None:
+        return None
+    return ConnectorConnection(
+        connector=row["connector"],
+        status=ConnectorConnectionStatus(row["status"]),
+        connected_at=(
+            datetime.fromisoformat(row["connected_at"])
+            if row["connected_at"]
+            else None
+        ),
+        updated_at=datetime.fromisoformat(row["updated_at"]),
+    )
+
+
 def database_is_ready(target: DatabaseTarget) -> bool:
     try:
         with connect(target) as conn:
@@ -669,6 +893,7 @@ def _migrate_legacy_sqlite_tables(conn: sqlite3.Connection) -> None:
         "daily_observations",
         "activities",
         "connector_syncs",
+        "connector_connections",
     ):
         columns = {
             row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()

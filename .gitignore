@@ -6,6 +6,6 @@ __pycache__/
 *.sqlite
 *.sqlite3
 data/
+garmin-token*.json
 dist/
 *.egg-info/
-

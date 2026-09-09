@@ -1,4 +1,5 @@
 from datetime import date
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -9,16 +10,25 @@ from outset_ready.domain import (
     EvidenceKind,
     EvidenceSource,
     GoalPriority,
+    ConnectorConnectionStatus,
 )
 from outset_ready.storage import (
+    ConnectorSyncAlreadyRunning,
     add_manual_evidence,
     connect,
     count_evidence_days,
+    delete_connector_connection,
     ensure_owner,
+    fetch_connector_connection,
     init_db,
     list_goals,
     list_recent_evidence,
+    load_connector_credentials,
+    mark_connector_connected,
+    mark_connector_reconnect_required,
+    save_connector_credentials,
     seed_reference_goals,
+    start_connector_sync,
     upsert_activity,
     upsert_daily_observation,
 )
@@ -222,3 +232,99 @@ def test_existing_single_owner_sqlite_data_is_migrated(tmp_path):
         )
     assert evidence[0].value == 91.4
     assert "user_id" in columns
+
+
+def test_connector_credentials_are_owner_scoped_and_statused(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path, owner_email="first@example.com")
+
+    with connect(db_path) as conn:
+        with conn:
+            ensure_owner(conn, user_id="second", email="second@example.com")
+        save_connector_credentials(
+            conn,
+            connector="garmin",
+            encrypted_credentials="ciphertext",
+            user_id="second",
+        )
+        assert load_connector_credentials(conn, connector="garmin") is None
+        assert (
+            load_connector_credentials(conn, connector="garmin", user_id="second")
+            == "ciphertext"
+        )
+        connection = fetch_connector_connection(
+            conn,
+            connector="garmin",
+            user_id="second",
+        )
+        assert connection is not None
+        assert connection.status is ConnectorConnectionStatus.TOKEN_SAVED
+
+        mark_connector_connected(conn, connector="garmin", user_id="second")
+        connected = fetch_connector_connection(
+            conn,
+            connector="garmin",
+            user_id="second",
+        )
+        assert connected is not None
+        assert connected.status is ConnectorConnectionStatus.CONNECTED
+        assert connected.connected_at is not None
+
+        mark_connector_reconnect_required(
+            conn,
+            connector="garmin",
+            user_id="second",
+        )
+        reconnect = fetch_connector_connection(
+            conn,
+            connector="garmin",
+            user_id="second",
+        )
+        assert reconnect is not None
+        assert reconnect.status is ConnectorConnectionStatus.RECONNECT_REQUIRED
+
+        delete_connector_connection(conn, connector="garmin", user_id="second")
+        assert (
+            fetch_connector_connection(conn, connector="garmin", user_id="second")
+            is None
+        )
+
+
+def test_connector_allows_one_running_sync_and_recovers_stale_record(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        first_id = start_connector_sync(
+            conn,
+            connector="garmin",
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 7),
+        )
+        with pytest.raises(ConnectorSyncAlreadyRunning):
+            start_connector_sync(
+                conn,
+                connector="garmin",
+                start_date=date(2026, 9, 1),
+                end_date=date(2026, 9, 7),
+            )
+
+        stale_time = (datetime.now(UTC) - timedelta(minutes=6)).isoformat()
+        conn.execute(
+            "UPDATE connector_syncs SET started_at = ? WHERE id = ?",
+            (stale_time, first_id),
+        )
+        second_id = start_connector_sync(
+            conn,
+            connector="garmin",
+            start_date=date(2026, 9, 1),
+            end_date=date(2026, 9, 7),
+        )
+
+        first = conn.execute(
+            "SELECT status, error_message FROM connector_syncs WHERE id = ?",
+            (first_id,),
+        ).fetchone()
+    assert second_id != first_id
+    assert first["status"] == "failed"
+    assert first["error_message"] == "Previous Garmin sync did not finish."

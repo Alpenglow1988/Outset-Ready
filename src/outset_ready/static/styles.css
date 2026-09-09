@@ -209,6 +209,12 @@ textarea { resize: vertical; }
 .connection-action { display: flex; flex-direction: column; align-items: flex-start; gap: 18px; }
 .connection-action .status { max-width: 100%; overflow-wrap: anywhere; }
 .connection-action .primary-button { margin-top: auto; }
+.connection-form { width: 100%; margin: 0; }
+.quiet-action { padding: 0; border: 0; background: transparent; color: #76271f; cursor: pointer; font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.connection-setup { width: 100%; padding-top: 14px; border-top: 1px solid var(--line); }
+.connection-setup summary { cursor: pointer; font-size: 13px; font-weight: 700; }
+.connection-setup code { display: block; padding: 10px 11px; background: var(--paper); overflow-wrap: anywhere; font-size: 11px; line-height: 1.5; }
+.connection-setup p { margin: 12px 0; font-size: 12px; }
 
 .login-page { min-height: 100vh; background: #000; }
 .login-shell {
@@ -229,6 +235,7 @@ textarea { resize: vertical; }
 .login-card { margin-top: 52px; padding: 38px; background: var(--paper); border: 1px solid #333; }
 .login-card h1 { font-size: 44px; }
 .form-error { padding: 12px 14px; border: 1px solid #8b2f25; background: #f6e5e1; color: #76271f; font-size: 13px; line-height: 1.5; }
+.form-notice { padding: 12px 14px; border: 1px solid var(--pine); background: var(--sage); color: var(--pine); font-size: 13px; line-height: 1.5; }
 .login-note { margin-top: 18px; color: rgb(255 255 255 / 55%); font-size: 12px; line-height: 1.6; }
 
 @media (max-width: 1050px) {
