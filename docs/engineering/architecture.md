@@ -129,6 +129,12 @@ Ready sends the snapshot through the OpenAI Responses API with structured output
 and `store=false`. Production can omit the API key; deterministic review and
 finalisation continue to work.
 
+Each owner action permits one outbound provider attempt. Ready disables the OpenAI
+SDK's automatic retries so a click cannot create an undisclosed second request.
+Provider failures are reduced to safe categories for persistence and the owner UI.
+The server log records the review ID, model, HTTP status, provider error code and
+request ID, but not the evidence snapshot, owner email, API key or other credentials.
+
 The first visit backfills at most 52 recent completed weeks to bound one serverless
 request. Ready keeps every materialised draft and finalised revision indefinitely.
 Later reminder work can call the same materialisation boundary before sending the

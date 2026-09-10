@@ -1,3 +1,4 @@
+import logging
 import re
 from datetime import date, timedelta
 
@@ -311,8 +312,12 @@ def test_confirmation_stops_when_evidence_changed_after_page_load(settings):
         assert reviews[0].status.value == "draft"
 
 
-def test_failed_interpretation_keeps_the_finalised_review_and_can_retry(settings):
+def test_failed_interpretation_is_logged_and_keeps_finalised_review(
+    settings,
+    caplog,
+):
     interpreter = FakeReviewInterpreter(fail=True)
+    caplog.set_level(logging.ERROR, logger="outset_ready.web")
     with TestClient(
         create_app(settings=settings, review_interpreter=interpreter)
     ) as review_client:
@@ -330,6 +335,14 @@ def test_failed_interpretation_keeps_the_finalised_review_and_can_retry(settings
         assert "notice=interpretation-failed" in failed.headers["location"]
         failed_page = review_client.get(failed.headers["location"])
         assert "Your confirmed evidence remains saved" in failed_page.text
+        assert "unexpected interpretation error" in failed_page.text
+        assert "Retry after fixing OpenAI setup" in failed_page.text
+
+        log_text = caplog.text
+        assert "Weekly interpretation failed" in log_text
+        assert f"review_id={review.id}" in log_text
+        assert "failure_code=unexpected_error" in log_text
+        assert "exception_type=RuntimeError" in log_text
 
         interpreter.fail = False
         retried = review_client.post(

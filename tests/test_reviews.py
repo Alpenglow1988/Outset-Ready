@@ -13,6 +13,9 @@ from outset_ready.reviews import (
     InterpretationOutput,
     OpenAIWeeklyReviewInterpreter,
     build_review_snapshot,
+    classify_interpretation_error,
+    interpretation_failure_message,
+    interpretation_failure_retryable,
     load_review_snapshot,
 )
 from outset_ready.storage import (
@@ -21,6 +24,7 @@ from outset_ready.storage import (
     complete_weekly_review_interpretation,
     connect,
     ensure_owner,
+    fail_weekly_review_interpretation,
     fetch_owner_data_bounds,
     fetch_weekly_review,
     fetch_weekly_review_interpretation,
@@ -257,8 +261,85 @@ def test_openai_interpreter_uses_structured_non_stored_response(monkeypatch):
     result = interpreter.interpret({"snapshot_version": 1, "weekly_read": {}})
 
     assert captured["client"]["api_key"] == "test-key"
+    assert captured["client"]["timeout"] == 60.0
+    assert captured["client"]["max_retries"] == 0
     assert captured["store"] is False
     assert captured["model"] == "test-model"
+    assert captured["max_output_tokens"] == 1_200
+    assert captured["reasoning"] == {"effort": "low"}
     assert captured["text_format"] is InterpretationOutput
     assert "Do not invent facts" in captured["input"][0]["content"]
     assert result.provider_response_id == "response-1"
+
+
+@pytest.mark.parametrize(
+    ("status_code", "provider_code", "expected"),
+    [
+        (401, None, "openai_authentication"),
+        (429, "insufficient_quota", "openai_quota"),
+        (429, None, "openai_rate_limit"),
+        (403, None, "openai_permission"),
+        (404, None, "openai_model_access"),
+        (400, None, "openai_request_invalid"),
+        (500, None, "openai_provider_error"),
+    ],
+)
+def test_interpretation_errors_are_classified_without_exposing_provider_detail(
+    status_code,
+    provider_code,
+    expected,
+):
+    class FakeProviderError(RuntimeError):
+        def __init__(self):
+            super().__init__("sensitive provider detail")
+            self.status_code = status_code
+            self.request_id = "req_test"
+            self.body = {"error": {"code": provider_code}}
+
+    failure = classify_interpretation_error(FakeProviderError())
+
+    assert failure.code == expected
+    assert failure.request_id == "req_test"
+    assert "sensitive provider detail" not in failure.public_message
+    assert interpretation_failure_message(expected) == failure.public_message
+
+
+def test_interpretation_failure_code_is_persisted_for_diagnostics(tmp_path):
+    db_path = tmp_path / "ready.sqlite"
+    init_db(db_path)
+
+    with connect(db_path) as conn:
+        snapshot = _snapshot(conn)
+        review = save_weekly_review_draft(
+            conn,
+            period_start=PERIOD_START,
+            period_end=PERIOD_END,
+            evidence_fingerprint=snapshot.fingerprint,
+            snapshot_json=snapshot.json,
+        )
+        finalise_weekly_review(
+            conn,
+            review_id=review.id,
+            expected_fingerprint=snapshot.fingerprint,
+        )
+        assert claim_weekly_review_interpretation(
+            conn,
+            review_id=review.id,
+            provider="openai",
+            model="test-model",
+            prompt_version="v1",
+        )
+        fail_weekly_review_interpretation(
+            conn,
+            review_id=review.id,
+            failure_code="openai_quota",
+        )
+        interpretation = fetch_weekly_review_interpretation(
+            conn,
+            review_id=review.id,
+        )
+
+    assert interpretation is not None
+    assert interpretation.status is InterpretationStatus.FAILED
+    assert interpretation.failure_code == "openai_quota"
+    assert not interpretation_failure_retryable(interpretation.failure_code)
