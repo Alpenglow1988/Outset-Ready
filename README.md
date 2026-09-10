@@ -103,7 +103,8 @@ refuses to start with temporary SQLite storage. Before merging this build:
 AI interpretation is optional. Add `OUTSET_READY_OPENAI_API_KEY` to Production to
 enable it. Ready defaults to `gpt-5.6-luna`; set `OUTSET_READY_OPENAI_MODEL` when a
 different enabled model fits the account. Without an API key, the owner can still
-finalise and retain the rules-based weekly review.
+finalise and retain the rules-based weekly review. API access and billing belong
+to the OpenAI API project, separately from any ChatGPT subscription.
 
 `vercel.json` tells Vercel to ignore every branch except `main`. Build and test
 review branches locally and in GitHub Actions, then allow one production deploy
@@ -151,8 +152,9 @@ confirmation again.
 When the OpenAI key is configured, confirmation sends the structured weekly
 snapshot for one interpretation and saves the result. Ready sets `store=false` on
 the Responses API request. Reloading or confirming the same completed revision does
-not create another call. An API failure leaves the confirmed evidence intact and
-offers a retry.
+not create another call. The SDK does not retry automatically. An API failure leaves
+the confirmed evidence intact, saves a safe failure category, and logs the provider
+request ID and status without logging the review snapshot or credentials.
 
 Ready encrypts the reusable token bundle before storing it in Postgres. Each hosted
 sync saves any refreshed token material back to Postgres. Garmin passwords remain

@@ -272,6 +272,7 @@ class WeeklyReviewInterpretation:
     one_adjustment: str | None
     encouragement: str | None
     provider_response_id: str | None
+    failure_code: str | None
     created_at: datetime
     completed_at: datetime | None = None
 

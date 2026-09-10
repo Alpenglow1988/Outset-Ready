@@ -85,7 +85,7 @@
               <p class="eyebrow">Finalised review</p>
               <h2>The evidence revision is locked</h2>
               {% if ai_available %}
-                <p>{% if interpretation and interpretation.status == interpretation_status.FAILED %}The interpretation request failed. Your confirmed evidence remains saved.{% else %}Ready has not saved an interpretation for this revision yet.{% endif %}</p>
+                <p>{% if interpretation_failure %}{{ interpretation_failure }} Your confirmed evidence remains saved.{% else %}Ready has not saved an interpretation for this revision yet.{% endif %}</p>
               {% else %}
                 <p>Add the optional OpenAI production settings before requesting an interpretation. The rules-based read remains available.</p>
               {% endif %}
@@ -94,7 +94,9 @@
               <form method="post" action="/week/reviews/{{ review.id }}/confirm" data-pending>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="confirmed" value="yes">
-                <button class="primary-button" type="submit" data-pending-label="Requesting interpretation">Request interpretation</button>
+                <button class="primary-button" type="submit" data-pending-label="Requesting interpretation">
+                  {% if interpretation_failure and not interpretation_retryable %}Retry after fixing OpenAI setup{% elif interpretation_failure %}Try interpretation again{% else %}Request interpretation{% endif %}
+                </button>
               </form>
             {% endif %}
           </section>

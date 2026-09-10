@@ -1669,9 +1669,11 @@ def fail_weekly_review_interpretation(
     conn,
     *,
     review_id: str,
-    error_message: str,
+    failure_code: str,
     user_id: str = DEFAULT_OWNER_ID,
 ) -> None:
+    if not failure_code or len(failure_code) > 80:
+        raise ValueError("A concise interpretation failure code is required.")
     with _transaction(conn):
         cursor = _execute(
             conn,
@@ -1682,7 +1684,7 @@ def fail_weekly_review_interpretation(
             """,
             (
                 InterpretationStatus.FAILED.value,
-                error_message.strip()[:500],
+                failure_code,
                 _utc_now(),
                 user_id,
                 review_id,
@@ -1704,7 +1706,7 @@ def fetch_weekly_review_interpretation(
         """
         SELECT weekly_review_id, status, provider, model, prompt_version,
                what_went_well, main_risk, one_adjustment, encouragement,
-               provider_response_id, created_at, completed_at
+               provider_response_id, error_message, created_at, completed_at
         FROM weekly_review_interpretations
         WHERE user_id = ? AND weekly_review_id = ?
         """,
@@ -1723,7 +1725,7 @@ def list_weekly_review_interpretations(
         """
         SELECT weekly_review_id, status, provider, model, prompt_version,
                what_went_well, main_risk, one_adjustment, encouragement,
-               provider_response_id, created_at, completed_at
+               provider_response_id, error_message, created_at, completed_at
         FROM weekly_review_interpretations
         WHERE user_id = ?
         """,
@@ -1800,6 +1802,7 @@ def _weekly_review_interpretation_from_row(row) -> WeeklyReviewInterpretation:
         one_adjustment=row["one_adjustment"],
         encouragement=row["encouragement"],
         provider_response_id=row["provider_response_id"],
+        failure_code=row["error_message"],
         created_at=datetime.fromisoformat(row["created_at"]),
         completed_at=(
             datetime.fromisoformat(row["completed_at"])

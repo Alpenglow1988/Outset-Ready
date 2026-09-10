@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -57,6 +58,9 @@ from outset_ready.reviews import (
     OpenAIWeeklyReviewInterpreter,
     WeeklyReviewInterpreter,
     build_review_snapshot,
+    classify_interpretation_error,
+    interpretation_failure_message,
+    interpretation_failure_retryable,
     load_review_snapshot,
 )
 from outset_ready.settings import AppSettings, load_app_settings
@@ -93,6 +97,7 @@ from outset_ready.weekly import build_weekly_read
 
 
 PACKAGE_DIR = Path(__file__).parent
+LOGGER = logging.getLogger(__name__)
 EVIDENCE_OPTIONS = (
     (EvidenceKind.WEIGHT_KG, "Weight"),
     (EvidenceKind.WAIST_CM, "Waist"),
@@ -128,7 +133,7 @@ def create_app(
         )
         yield
 
-    app = FastAPI(title="Outset Ready", version="0.7.0", lifespan=lifespan)
+    app = FastAPI(title="Outset Ready", version="0.7.1", lifespan=lifespan)
     app.state.settings = settings
     app.add_middleware(
         SignedSessionMiddleware,
@@ -800,6 +805,18 @@ def create_app(
             ]
 
         snapshot = load_review_snapshot(selected_review.snapshot_json)
+        interpretation_failure = (
+            interpretation_failure_message(interpretation.failure_code)
+            if interpretation
+            and interpretation.status is InterpretationStatus.FAILED
+            else None
+        )
+        interpretation_retryable = (
+            interpretation_failure_retryable(interpretation.failure_code)
+            if interpretation
+            and interpretation.status is InterpretationStatus.FAILED
+            else True
+        )
         newer_revision_exists = any(
             item.period_start == selected_review.period_start
             and item.revision > selected_review.revision
@@ -815,8 +832,8 @@ def create_app(
                 "The evidence changed, so Ready created a new draft for you to check."
             ),
             "interpretation-failed": (
-                "The review is finalised, but the interpretation service did not respond. "
-                "Your confirmed evidence is safe and you can try again."
+                "The review is finalised, but its interpretation could not be completed. "
+                "Your confirmed evidence is safe. See the reason below."
             ),
         }
         return templates.TemplateResponse(
@@ -827,6 +844,8 @@ def create_app(
                 "review_goals": snapshot["goals"],
                 "review": selected_review,
                 "interpretation": interpretation,
+                "interpretation_failure": interpretation_failure,
+                "interpretation_retryable": interpretation_retryable,
                 "review_history": review_history,
                 "newer_revision_exists": newer_revision_exists,
                 "review_status": WeeklyReviewStatus,
@@ -905,11 +924,25 @@ def create_app(
                 load_review_snapshot(finalised.snapshot_json)
             )
         except Exception as exc:
+            failure = classify_interpretation_error(exc)
+            LOGGER.exception(
+                "Weekly interpretation failed review_id=%s provider=%s "
+                "model=%s failure_code=%s exception_type=%s status_code=%s "
+                "provider_code=%s request_id=%s",
+                finalised.id,
+                review_interpreter.provider,
+                review_interpreter.model,
+                failure.code,
+                failure.exception_type,
+                failure.status_code,
+                failure.provider_code,
+                failure.request_id,
+            )
             with connect(settings.database_target) as conn:
                 fail_weekly_review_interpretation(
                     conn,
                     review_id=finalised.id,
-                    error_message=type(exc).__name__,
+                    failure_code=failure.code,
                     user_id=user_id,
                 )
             return RedirectResponse(
