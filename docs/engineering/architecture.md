@@ -70,8 +70,31 @@ days. Completed connector-sync intervals define backfill progress. A failed or
 interrupted interval cannot claim coverage, and an idempotent retry can safely
 write the same observations and activities again.
 
-The weekly read remains deterministic. Issue #8 will add planned-versus-completed
-work, and issue #9 will add one user-confirmed, cached AI interpretation.
+The weekly read remains deterministic. Issue #9 will add one user-confirmed,
+cached AI interpretation.
+
+## Week in Progress and plan comparison
+
+Ready owns a provider-neutral plan model rather than treating Garmin Calendar as
+the source of truth:
+
+1. Every successful Garmin Calendar request writes an immutable snapshot for the
+   requested period.
+2. Stable provider identities update the same planned session instead of creating
+   duplicates. Provider removals remain in revision history.
+3. Manual sessions and owner changes write through the same current-plan table and
+   append a revision for every move, replacement, reduction, skip or restore.
+4. An owner override is not silently replaced by a later provider refresh.
+5. Completed activities auto-match only when there is exactly one same-date,
+   same-type candidate. Ambiguous matches require an explicit owner choice, and one
+   activity cannot satisfy two planned sessions.
+6. The current Monday-to-Sunday screen is descriptive, not a daily readiness
+   verdict. Completed-week assessment uses active plan follow-through alongside
+   goal direction and recovery evidence.
+
+Explicitly skipped sessions stay visible as intentional changes and are excluded
+from the completion denominator. A failed Garmin request cannot replace the last
+successful snapshot, so manual planning and the saved current plan remain useful.
 
 ## Editable goal stack
 
@@ -152,6 +175,7 @@ Missing optional context must never force `Building a picture`. That state shoul
 
 ## Immediate follow-on
 
-Calendar plan comparison can now consume the hosted weekly evidence and historical
-goal context rather than a local report. Scheduled priority handovers and evidence
-templates remain the next goal-specific extension after the plan comparison slice.
+The Week in Progress screen can now feed the completed review and later confirmation
+flow. Scheduled priority handovers, common goal templates and configurable evidence
+templates remain goal-specific extensions; issue #9 tracks the confirmed, cached AI
+interpretation.

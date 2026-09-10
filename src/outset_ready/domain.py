@@ -43,6 +43,46 @@ class ActivityType(StrEnum):
     OTHER = "other"
 
 
+class PlanSource(StrEnum):
+    GARMIN = "garmin"
+    MANUAL = "manual"
+
+
+class PlannedSessionStatus(StrEnum):
+    PLANNED = "planned"
+    SKIPPED = "skipped"
+    REMOVED = "removed"
+
+
+class PlanChangeType(StrEnum):
+    IMPORTED = "imported"
+    PROVIDER_UPDATED = "provider_updated"
+    PROVIDER_REMOVED = "provider_removed"
+    ADDED = "added"
+    EDITED = "edited"
+    MOVED = "moved"
+    REPLACED = "replaced"
+    SHORTENED = "shortened"
+    SKIPPED = "skipped"
+    RESTORED = "restored"
+
+
+class PlanChangeReason(StrEnum):
+    SCHEDULE = "schedule"
+    RECOVERY = "recovery"
+    SORENESS_OR_ILLNESS = "soreness_or_illness"
+    TRAVEL = "travel"
+    WEATHER = "weather"
+    MOTIVATION = "motivation"
+    PLAN_CHANGED = "plan_changed"
+    OTHER = "other"
+
+
+class PlanMatchMethod(StrEnum):
+    AUTOMATIC = "automatic"
+    MANUAL = "manual"
+
+
 class ConnectorSyncStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
@@ -135,6 +175,42 @@ class ActivityRecord:
     average_hr: float | None = None
     calories: float | None = None
     source_ref: str | None = None
+
+
+@dataclass(frozen=True)
+class PlanImportItem:
+    external_id: str
+    scheduled_on: date
+    activity_type: ActivityType
+    title: str
+    planned_duration_seconds: float | None = None
+    planned_distance_meters: float | None = None
+    source_ref: str | None = None
+
+
+@dataclass(frozen=True)
+class PlannedSession:
+    id: str
+    source: PlanSource
+    external_id: str | None
+    scheduled_on: date
+    activity_type: ActivityType
+    title: str
+    status: PlannedSessionStatus
+    planned_duration_seconds: float | None = None
+    planned_distance_meters: float | None = None
+    manual_override: bool = False
+
+
+@dataclass(frozen=True)
+class PlannedSessionRevision:
+    id: str
+    planned_session_id: str
+    change_type: PlanChangeType
+    actor: str
+    changed_at: datetime
+    reason: PlanChangeReason | None = None
+    reason_note: str | None = None
 
 
 @dataclass(frozen=True)

@@ -12,6 +12,7 @@ from outset_ready.domain import (
     EvidenceKind,
     EvidenceSource,
 )
+from outset_ready.plans import build_plan_week, create_manual_session
 from outset_ready.storage import (
     add_manual_evidence,
     connect,
@@ -40,6 +41,11 @@ def test_postgres_implements_the_ready_storage_contract():
     with connect(POSTGRES_URL) as conn:
         with conn.transaction():
             for table in (
+                "planned_activity_matches",
+                "planned_session_revisions",
+                "planned_sessions",
+                "plan_snapshot_sessions",
+                "plan_snapshots",
                 "connector_connections",
                 "connector_syncs",
                 "activities",
@@ -77,6 +83,12 @@ def test_postgres_implements_the_ready_storage_contract():
         )
         upsert_activity(conn, activity)
         upsert_activity(conn, activity)
+        create_manual_session(
+            conn,
+            scheduled_on=date(2026, 9, 3),
+            activity_type=ActivityType.RUN,
+            title="Easy run",
+        )
 
         assert len(list_goals(conn)) == 4
         assert len(list_recent_evidence(conn)) == 1
@@ -104,4 +116,9 @@ def test_postgres_implements_the_ready_storage_contract():
                 end_date=date(2026, 9, 3),
             )
         ) == 1
+        assert build_plan_week(
+            conn,
+            period_start=date(2026, 9, 1),
+            period_end=date(2026, 9, 7),
+        ).planned_sessions == 1
     assert database_is_ready(POSTGRES_URL)

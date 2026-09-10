@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Week in Progress · Outset Ready</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+    <script src="{{ url_for('static', path='/app.js') }}" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="Outset Ready home">
+          <img class="brand-mark" src="{{ url_for('static', path='/outset-mark.svg') }}" alt="">
+          <span>Outset <strong>Ready</strong></span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a class="nav-link" href="/">Overview</a>
+          <a class="nav-link active" href="/week/current">Week in progress</a>
+          <a class="nav-link" href="/week">Weekly read</a>
+          <a class="nav-link" href="/goals">Goals</a>
+          <span class="nav-link disabled">Events</span>
+          <a class="nav-link" href="/connections">Connections</a>
+        </nav>
+        <div class="sidebar-footer">
+          <p class="sidebar-note">{{ owner_email }}<br>{% if persistent_storage %}Persistent private data{% else %}Local development data{% endif %}</p>
+          <form class="logout-form" method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="nav-link logout-button" type="submit">Sign out</button>
+          </form>
+        </div>
+      </aside>
+
+      <main>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Current Monday to Sunday</p>
+            <h1>Week in Progress</h1>
+            <p class="lede">{{ plan.period_start.strftime('%d %B') }} to {{ plan.period_end.strftime('%d %B %Y') }}</p>
+          </div>
+          <span class="status">Live week</span>
+        </header>
+
+        <p class="live-week-note">This is a live account of the week, not a daily judgement. Ready assesses the pattern after the week closes.</p>
+        {% if notice %}<p class="form-notice" role="status">{{ notice }}</p>{% endif %}
+        {% if error %}<p class="form-error" role="alert">{{ error }}</p>{% endif %}
+
+        <section class="week-summary-strip" aria-label="Current week summary">
+          <article><strong>{{ plan.planned_sessions }}</strong><span>active planned</span></article>
+          <article><strong>{{ plan.completed_sessions }}</strong><span>matched complete</span></article>
+          <article><strong>{{ due_unmatched }}</strong><span>due without match</span></article>
+          <article><strong>{{ adjusted_sessions }}</strong><span>adjusted out</span></article>
+        </section>
+
+        <div class="week-toolbar">
+          <div>
+            <p class="eyebrow">Latest provider plan</p>
+            {% if garmin_connection and garmin_connection.status.value != 'reconnect_required' %}
+              <p>Refresh Garmin Calendar when its planned workouts change. Your recorded edits are preserved.</p>
+            {% elif garmin_connection %}
+              <p>Garmin needs a replacement token. The saved plan and manual controls still work.</p>
+            {% else %}
+              <p>Manual planning works without Garmin. Connect it when you want to import Garmin Calendar workouts.</p>
+            {% endif %}
+          </div>
+          {% if garmin_connection and garmin_connection.status.value != 'reconnect_required' %}
+            <form method="post" action="/week/current/garmin" data-pending>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <button class="primary-button" type="submit" data-pending-label="Refreshing Garmin plan">Refresh Garmin plan</button>
+            </form>
+          {% else %}
+            <a class="primary-button button-link" href="/connections">{% if garmin_connection %}Reconnect Garmin{% else %}Connect Garmin{% endif %}</a>
+          {% endif %}
+        </div>
+
+        <section class="week-board" aria-label="Plan and completed activity by day">
+          {% for day in days %}
+            <article class="week-day{% if day.date == today %} is-today{% endif %}">
+              <header>
+                <span>{{ day.date.strftime('%A') }}</span>
+                <strong>{{ day.date.strftime('%d %b') }}</strong>
+              </header>
+
+              <div class="day-sessions">
+                {% for row in day.sessions %}
+                  <section class="plan-session session-{{ row.session.status.value }}">
+                    <div class="session-heading">
+                      <span>{{ row.session.source.value }}</span>
+                      <span>{% if row.matched_activity %}completed{% else %}{{ row.session.status.value }}{% endif %}</span>
+                    </div>
+                    <h2>{{ row.session.title }}</h2>
+                    <p>
+                      {{ row.session.activity_type.value | replace('_', ' ') }}
+                      {% if row.session.planned_duration_seconds is not none %} · {{ (row.session.planned_duration_seconds / 60) | round | int }} min{% endif %}
+                      {% if row.session.planned_distance_meters is not none %} · {{ '%.1f' | format(row.session.planned_distance_meters / 1000) }} km{% endif %}
+                    </p>
+                    {% if row.matched_activity %}
+                      <p class="match-copy">Matched to {{ row.matched_activity.name or 'completed activity' }}</p>
+                      <form method="post" action="/week/current/sessions/{{ row.session.id }}/unmatch" data-pending>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button class="quiet-action" type="submit" data-pending-label="Removing match">Remove match</button>
+                      </form>
+                    {% elif row.session.status.value == 'planned' and plan.unmatched_activities %}
+                      <details class="session-action">
+                        <summary>Match completed activity</summary>
+                        <form method="post" action="/week/current/sessions/{{ row.session.id }}/match" data-pending>
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                          <label>
+                            Activity
+                            <select name="activity_identity" required>
+                              {% for activity in plan.unmatched_activities %}
+                                <option value="{{ activity.source.value }}|{{ activity.external_id }}">{{ activity.recorded_on.strftime('%a %d %b') }} · {{ activity.name or activity.activity_type.value | replace('_', ' ') }}</option>
+                              {% endfor %}
+                            </select>
+                          </label>
+                          <button class="primary-button" type="submit" data-pending-label="Matching activity">Match activity</button>
+                        </form>
+                      </details>
+                    {% endif %}
+
+                    {% if row.session.status.value == 'planned' %}
+                      <details class="session-action">
+                        <summary>Adjust session</summary>
+                        <form method="post" action="/week/current/sessions/{{ row.session.id }}" data-pending>
+                          <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                          <label>Date<input type="date" name="scheduled_on" min="{{ plan.period_start.isoformat() }}" max="{{ plan.period_end.isoformat() }}" value="{{ row.session.scheduled_on.isoformat() }}" required></label>
+                          <label>Name<input type="text" name="title" maxlength="120" value="{{ row.session.title }}" required></label>
+                          <label>Activity type
+                            <select name="activity_type" required>
+                              {% for activity_type in activity_types %}<option value="{{ activity_type.value }}"{% if activity_type == row.session.activity_type %} selected{% endif %}>{{ activity_type.value | replace('_', ' ') | title }}</option>{% endfor %}
+                            </select>
+                          </label>
+                          <div class="form-row">
+                            <label>Minutes <span>Optional</span><input type="number" name="duration_minutes" min="0.1" step="0.1" value="{% if row.session.planned_duration_seconds is not none %}{{ '%g' | format(row.session.planned_duration_seconds / 60) }}{% endif %}"></label>
+                            <label>Distance km <span>Optional</span><input type="number" name="distance_km" min="0.001" step="0.001" value="{% if row.session.planned_distance_meters is not none %}{{ '%g' | format(row.session.planned_distance_meters / 1000) }}{% endif %}"></label>
+                          </div>
+                          <label>What changed?
+                            <select name="change_type" required>
+                              {% for change_type in plan_change_types %}<option value="{{ change_type.value }}">{{ change_type.value | title }}</option>{% endfor %}
+                            </select>
+                          </label>
+                          <label>Reason <span>Optional</span>
+                            <select name="reason"><option value="">No reason added</option>{% for reason in plan_change_reasons %}<option value="{{ reason.value }}">{{ reason.value | replace('_', ' ') | title }}</option>{% endfor %}</select>
+                          </label>
+                          <label>Note <span>Optional</span><input type="text" name="reason_note" maxlength="240"></label>
+                          <button class="primary-button" type="submit" data-pending-label="Saving change">Save change</button>
+                        </form>
+                      </details>
+                      {% if not row.matched_activity %}
+                        <details class="session-action">
+                          <summary>Skip session</summary>
+                          <form method="post" action="/week/current/sessions/{{ row.session.id }}/skip" data-pending>
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <label>Reason <span>Optional</span>
+                              <select name="reason"><option value="">No reason added</option>{% for reason in plan_change_reasons %}<option value="{{ reason.value }}">{{ reason.value | replace('_', ' ') | title }}</option>{% endfor %}</select>
+                            </label>
+                            <label>Note <span>Optional</span><input type="text" name="reason_note" maxlength="240"></label>
+                            <button class="quiet-action" type="submit" data-pending-label="Skipping session">Mark as skipped</button>
+                          </form>
+                        </details>
+                      {% endif %}
+                    {% elif row.session.status.value == 'skipped' %}
+                      <form method="post" action="/week/current/sessions/{{ row.session.id }}/restore" data-pending>
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button class="quiet-action" type="submit" data-pending-label="Restoring session">Restore session</button>
+                      </form>
+                    {% endif %}
+                  </section>
+                {% else %}
+                  <p class="day-empty">No planned session.</p>
+                {% endfor %}
+              </div>
+
+              {% if day.activities %}
+                <div class="day-activities">
+                  <p class="eyebrow">Recorded</p>
+                  {% for activity in day.activities %}
+                    <p><strong>{{ activity.name or activity.activity_type.value | replace('_', ' ') | title }}</strong>{% if activity.duration_seconds is not none %}<span>{{ (activity.duration_seconds / 60) | round | int }} min</span>{% endif %}</p>
+                  {% endfor %}
+                </div>
+              {% endif %}
+            </article>
+          {% endfor %}
+        </section>
+
+        <div class="week-lower-grid">
+          <section class="panel add-session-panel">
+            <p class="eyebrow">Manual plan</p>
+            <h2>Add a planned session</h2>
+            <p>Use this when the plan lives outside Garmin or changes during the week.</p>
+            <form method="post" action="/week/current/sessions" data-pending>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <div class="form-row">
+                <label>Date<input type="date" name="scheduled_on" min="{{ plan.period_start.isoformat() }}" max="{{ plan.period_end.isoformat() }}" value="{{ today.isoformat() }}" required></label>
+                <label>Activity type
+                  <select name="activity_type" required>{% for activity_type in activity_types %}<option value="{{ activity_type.value }}">{{ activity_type.value | replace('_', ' ') | title }}</option>{% endfor %}</select>
+                </label>
+              </div>
+              <label>Session name<input type="text" name="title" maxlength="120" placeholder="Easy run, strength, recovery walk" required></label>
+              <div class="form-row">
+                <label>Minutes <span>Optional</span><input type="number" name="duration_minutes" min="0.1" step="0.1"></label>
+                <label>Distance km <span>Optional</span><input type="number" name="distance_km" min="0.001" step="0.001"></label>
+              </div>
+              <button class="primary-button" type="submit" data-pending-label="Adding session">Add planned session</button>
+            </form>
+          </section>
+
+          <section class="panel plan-history-panel">
+            <p class="eyebrow">Revision history</p>
+            <h2>How the plan changed</h2>
+            {% if revision_entries %}
+              <ol class="plan-history">
+                {% for revision, title in revision_entries %}
+                  <li>
+                    <div><strong>{{ title }}</strong><span>{{ revision.change_type.value | replace('_', ' ') }}</span></div>
+                    <time>{{ revision.changed_at.strftime('%d %b · %H:%M') }}</time>
+                    {% if revision.reason or revision.reason_note %}<p>{% if revision.reason %}{{ revision.reason.value | replace('_', ' ') | title }}{% endif %}{% if revision.reason and revision.reason_note %}: {% endif %}{{ revision.reason_note or '' }}</p>{% endif %}
+                  </li>
+                {% endfor %}
+              </ol>
+            {% else %}
+              <div class="empty-state"><p>No plan changes recorded for this week yet.</p></div>
+            {% endif %}
+          </section>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

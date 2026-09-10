@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import UTC, date, datetime
 from statistics import mean
 from typing import Any
@@ -10,6 +11,7 @@ from outset_ready.domain import (
     ActivityType,
     DailyObservation,
     EvidenceSource,
+    PlanImportItem,
 )
 
 
@@ -227,6 +229,75 @@ def normalise_activity(
     )
 
 
+def extract_scheduled_workout_date(workout: dict[str, Any]) -> str | None:
+    for key in (
+        "date",
+        "calendarDate",
+        "scheduledDate",
+        "workoutDate",
+        "startDate",
+        "startTimeLocal",
+        "startTimeGMT",
+    ):
+        parsed = _parse_datetime(workout.get(key))
+        if parsed is not None:
+            return parsed.date().isoformat()
+    return None
+
+
+def normalise_scheduled_workout(
+    workout: dict[str, Any],
+    *,
+    source_ref: str | None = None,
+) -> PlanImportItem | None:
+    scheduled_date = extract_scheduled_workout_date(workout)
+    if scheduled_date is None or not _looks_like_scheduled_workout(workout):
+        return None
+
+    calendar_id = _first(
+        workout,
+        ("scheduledWorkoutId", "calendarItemId", "calendarId", "id"),
+    )
+    workout_id = _first(workout, ("workoutId", "workout_id"))
+    if calendar_id is not None:
+        external_id = f"calendar:{calendar_id}"
+    elif workout_id is not None:
+        external_id = f"workout:{workout_id}:{scheduled_date}"
+    else:
+        identity = json.dumps(workout, sort_keys=True, default=str)
+        digest = hashlib.sha1(identity.encode("utf-8")).hexdigest()
+        external_id = f"fallback:{digest}:{scheduled_date}"
+
+    raw_title = _as_text(
+        _first(workout, ("workoutName", "title", "name", "description"))
+    )
+    title = (raw_title.strip() if raw_title else "Planned workout")[:120]
+    activity_type = map_activity_type(
+        _first(workout, ("sportType", "activityType", "activity_type", "type"))
+    )
+    return PlanImportItem(
+        external_id=external_id,
+        scheduled_on=date.fromisoformat(scheduled_date),
+        activity_type=activity_type,
+        title=title,
+        planned_duration_seconds=_numeric_with_units(
+            workout,
+            (
+                "durationSeconds",
+                "durationInSeconds",
+                "estimatedDurationInSecs",
+                "estimatedDurationSeconds",
+                "duration",
+                "durationMillis",
+                "durationInMilliseconds",
+            ),
+            millis=True,
+        ),
+        planned_distance_meters=_distance_meters(workout),
+        source_ref=source_ref,
+    )
+
+
 def _extract_body_composition(
     body_composition: dict[str, Any],
 ) -> tuple[float | None, float | None]:
@@ -300,9 +371,36 @@ def _activity_type_value(raw_type: Any) -> Any:
     if isinstance(raw_type, dict):
         return _first(
             raw_type,
-            ("typeKey", "typeName", "activityType", "activityTypeName", "name", "type", "key"),
+            (
+                "sportTypeKey",
+                "sportTypeName",
+                "typeKey",
+                "typeName",
+                "activityType",
+                "activityTypeName",
+                "name",
+                "type",
+                "key",
+            ),
         )
     return raw_type
+
+
+def _looks_like_scheduled_workout(workout: dict[str, Any]) -> bool:
+    item_type = _as_text(
+        _first(workout, ("calendarItemType", "itemType", "eventType"))
+    )
+    if item_type and "workout" not in item_type.casefold():
+        return False
+    return any(
+        workout.get(key) is not None
+        for key in (
+            "workoutId",
+            "workout_id",
+            "workoutName",
+            "scheduledWorkoutId",
+        )
+    ) or bool(item_type and "workout" in item_type.casefold())
 
 
 def _numeric(mapping: dict[str, Any], keys: tuple[str, ...]) -> float | None:
@@ -432,4 +530,3 @@ def _as_int(value: Any) -> int | None:
 
 def _as_text(value: Any) -> str | None:
     return str(value) if value is not None else None
-
