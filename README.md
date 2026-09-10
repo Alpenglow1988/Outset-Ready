@@ -8,7 +8,7 @@ Ready starts with the user’s goal, gathers evidence from Garmin or manual entr
 
 ## Current status
 
-The first eight application slices now provide a private, durable owner workspace:
+The first nine application slices now provide a private, durable owner workspace:
 
 - A desktop-first, responsive dashboard.
 - An editable health, fitness and adventure goal stack in SQLite or Postgres.
@@ -39,9 +39,12 @@ The first eight application slices now provide a private, durable owner workspac
 - Owner-recorded moves, replacements, reductions, skips and restores, with optional reasons.
 - Conservative automatic activity matching and manual resolution when a match is ambiguous.
 - Completed-week plan follow-through, with explicit skips excluded from the completion denominator.
+- Durable weekly review drafts with immutable evidence revisions.
+- Explicit owner confirmation before one cached AI interpretation.
+- Review history that preserves unfinished weeks without blocking the next week.
 
 Ready now covers WL's deterministic weekly evidence and planned-versus-completed
-layers. Confirmed AI interpretation remains a later, separate product slice.
+layers, then lets the owner close each week through a confirmed review.
 
 Open `Goals` to create, edit or archive a goal. Ready keeps exactly one active
 current priority. To replace it, edit another goal and choose `Current`; Ready
@@ -97,6 +100,11 @@ refuses to start with temporary SQLite storage. Before merging this build:
    `outset-ready generate-encryption-key` and add it to Production.
 5. Confirm the values are not exposed to Preview or Development unless intended.
 
+AI interpretation is optional. Add `OUTSET_READY_OPENAI_API_KEY` to Production to
+enable it. Ready defaults to `gpt-5.6-luna`; set `OUTSET_READY_OPENAI_MODEL` when a
+different enabled model fits the account. Without an API key, the owner can still
+finalise and retain the rules-based weekly review.
+
 `vercel.json` tells Vercel to ignore every branch except `main`. Build and test
 review branches locally and in GitHub Actions, then allow one production deploy
 when the reviewed PR is merged.
@@ -133,6 +141,18 @@ moved, replaced, shortened, skipped or restored without erasing what the provide
 originally supplied. Ready only auto-matches a completed activity when exactly one
 same-day, same-type candidate exists; use the match control when the choice is
 ambiguous.
+
+Open `Weekly read` after Sunday. Ready prepares drafts for completed weeks covered
+by the recent evidence history. Check the optional context and plan follow-through,
+then confirm the selected revision. Confirmation locks that evidence snapshot. If
+the evidence changes later, Ready creates a new visible draft revision and asks for
+confirmation again.
+
+When the OpenAI key is configured, confirmation sends the structured weekly
+snapshot for one interpretation and saves the result. Ready sets `store=false` on
+the Responses API request. Reloading or confirming the same completed revision does
+not create another call. An API failure leaves the confirmed evidence intact and
+offers a retry.
 
 Ready encrypts the reusable token bundle before storing it in Postgres. Each hosted
 sync saves any refreshed token material back to Postgres. Garmin passwords remain

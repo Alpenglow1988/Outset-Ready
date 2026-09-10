@@ -25,6 +25,8 @@ class AppSettings:
     credential_encryption_key: str
     secure_cookies: bool
     owner_id: str = DEFAULT_OWNER_ID
+    openai_api_key: str | None = None
+    openai_model: str = "gpt-5.6-luna"
 
     @property
     def persistent_storage(self) -> bool:
@@ -44,6 +46,14 @@ def load_app_settings(
     session_secret = values.get("OUTSET_READY_SESSION_SECRET", "")
     credential_encryption_key = values.get(
         "OUTSET_READY_CREDENTIAL_ENCRYPTION_KEY", ""
+    ).strip()
+    openai_api_key = (
+        values.get("OUTSET_READY_OPENAI_API_KEY")
+        or values.get("OPENAI_API_KEY")
+        or ""
+    ).strip()
+    openai_model = values.get(
+        "OUTSET_READY_OPENAI_MODEL", "gpt-5.6-luna"
     ).strip()
 
     missing = [
@@ -94,6 +104,8 @@ def load_app_settings(
         session_secret=session_secret,
         credential_encryption_key=credential_encryption_key,
         secure_cookies=is_vercel or values.get("OUTSET_READY_SECURE_COOKIES") == "1",
+        openai_api_key=openai_api_key or None,
+        openai_model=openai_model or "gpt-5.6-luna",
     )
 
 

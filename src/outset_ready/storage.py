@@ -24,6 +24,10 @@ from outset_ready.domain import (
     Goal,
     GoalCategory,
     GoalPriority,
+    InterpretationStatus,
+    WeeklyReview,
+    WeeklyReviewInterpretation,
+    WeeklyReviewStatus,
     validate_evidence,
 )
 
@@ -31,6 +35,7 @@ from outset_ready.domain import (
 DatabaseTarget: TypeAlias = str | Path
 DEFAULT_OWNER_ID = "owner"
 CONNECTOR_SYNC_STALE_AFTER = timedelta(minutes=5)
+INTERPRETATION_STALE_AFTER = timedelta(minutes=5)
 
 
 class ConnectorSyncAlreadyRunning(RuntimeError):
@@ -275,6 +280,42 @@ SCHEMA_STATEMENTS = (
       PRIMARY KEY (user_id, connector)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS weekly_reviews (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      id TEXT PRIMARY KEY,
+      period_start TEXT NOT NULL,
+      period_end TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      evidence_fingerprint TEXT NOT NULL,
+      snapshot_json TEXT NOT NULL,
+      status TEXT NOT NULL CHECK (status IN ('draft', 'finalised')),
+      created_at TEXT NOT NULL,
+      finalised_at TEXT,
+      UNIQUE (user_id, period_start, period_end, revision),
+      UNIQUE (user_id, period_start, period_end, evidence_fingerprint)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS weekly_review_interpretations (
+      user_id TEXT NOT NULL REFERENCES users(id),
+      weekly_review_id TEXT NOT NULL REFERENCES weekly_reviews(id),
+      status TEXT NOT NULL CHECK (status IN ('pending', 'completed', 'failed')),
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      prompt_version TEXT NOT NULL,
+      what_went_well TEXT,
+      main_risk TEXT,
+      one_adjustment TEXT,
+      encouragement TEXT,
+      provider_response_id TEXT,
+      error_message TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      completed_at TEXT,
+      PRIMARY KEY (user_id, weekly_review_id)
+    )
+    """,
 )
 
 INDEX_STATEMENTS = (
@@ -324,6 +365,10 @@ INDEX_STATEMENTS = (
     CREATE UNIQUE INDEX IF NOT EXISTS connector_syncs_one_running_idx
       ON connector_syncs(user_id, connector)
       WHERE status = 'running'
+    """,
+    """
+    CREATE INDEX IF NOT EXISTS weekly_reviews_user_period_idx
+      ON weekly_reviews(user_id, period_start DESC, revision DESC)
     """,
 )
 
@@ -1312,6 +1357,410 @@ def fetch_connector_connection(
     )
 
 
+def save_weekly_review_draft(
+    conn,
+    *,
+    period_start: date,
+    period_end: date,
+    evidence_fingerprint: str,
+    snapshot_json: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> WeeklyReview:
+    if (period_end - period_start).days != 6:
+        raise ValueError("A weekly review requires seven consecutive days.")
+    if len(evidence_fingerprint) != 64:
+        raise ValueError("A weekly review fingerprint must be a SHA-256 digest.")
+    if not snapshot_json.strip():
+        raise ValueError("A weekly review requires a snapshot.")
+
+    with _transaction(conn):
+        existing = _execute(
+            conn,
+            """
+            SELECT id, period_start, period_end, revision, evidence_fingerprint,
+                   snapshot_json, status, created_at, finalised_at
+            FROM weekly_reviews
+            WHERE user_id = ? AND period_start = ? AND period_end = ?
+              AND evidence_fingerprint = ?
+            """,
+            (
+                user_id,
+                period_start.isoformat(),
+                period_end.isoformat(),
+                evidence_fingerprint,
+            ),
+        ).fetchone()
+        if existing is not None:
+            return _weekly_review_from_row(existing)
+
+        for _attempt in range(3):
+            latest = _execute(
+                conn,
+                """
+                SELECT MAX(revision) AS latest_revision
+                FROM weekly_reviews
+                WHERE user_id = ? AND period_start = ? AND period_end = ?
+                """,
+                (user_id, period_start.isoformat(), period_end.isoformat()),
+            ).fetchone()
+            revision = int(latest["latest_revision"] or 0) + 1
+            _execute(
+                conn,
+                """
+                INSERT INTO weekly_reviews (
+                  user_id, id, period_start, period_end, revision,
+                  evidence_fingerprint, snapshot_json, status, created_at,
+                  finalised_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    user_id,
+                    str(uuid4()),
+                    period_start.isoformat(),
+                    period_end.isoformat(),
+                    revision,
+                    evidence_fingerprint,
+                    snapshot_json,
+                    WeeklyReviewStatus.DRAFT.value,
+                    _utc_now(),
+                    None,
+                ),
+            )
+            saved = _execute(
+                conn,
+                """
+                SELECT id, period_start, period_end, revision,
+                       evidence_fingerprint, snapshot_json, status, created_at,
+                       finalised_at
+                FROM weekly_reviews
+                WHERE user_id = ? AND period_start = ? AND period_end = ?
+                  AND evidence_fingerprint = ?
+                """,
+                (
+                    user_id,
+                    period_start.isoformat(),
+                    period_end.isoformat(),
+                    evidence_fingerprint,
+                ),
+            ).fetchone()
+            if saved is not None:
+                return _weekly_review_from_row(saved)
+        raise RuntimeError("Could not allocate a weekly review revision.")
+
+
+def fetch_weekly_review(
+    conn,
+    *,
+    review_id: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> WeeklyReview | None:
+    row = _execute(
+        conn,
+        """
+        SELECT id, period_start, period_end, revision, evidence_fingerprint,
+               snapshot_json, status, created_at, finalised_at
+        FROM weekly_reviews
+        WHERE user_id = ? AND id = ?
+        """,
+        (user_id, review_id),
+    ).fetchone()
+    return _weekly_review_from_row(row) if row is not None else None
+
+
+def list_weekly_reviews(
+    conn,
+    *,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> list[WeeklyReview]:
+    rows = _execute(
+        conn,
+        """
+        SELECT id, period_start, period_end, revision, evidence_fingerprint,
+               snapshot_json, status, created_at, finalised_at
+        FROM weekly_reviews
+        WHERE user_id = ?
+        ORDER BY period_start DESC, revision DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [_weekly_review_from_row(row) for row in rows]
+
+
+def finalise_weekly_review(
+    conn,
+    *,
+    review_id: str,
+    expected_fingerprint: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> WeeklyReview:
+    with _transaction(conn):
+        review = fetch_weekly_review(conn, review_id=review_id, user_id=user_id)
+        if review is None:
+            raise LookupError("Weekly review not found.")
+        if review.evidence_fingerprint != expected_fingerprint:
+            raise ValueError("The weekly evidence changed before confirmation.")
+        if review.status is WeeklyReviewStatus.DRAFT:
+            finalised_at = _utc_now()
+            _execute(
+                conn,
+                """
+                UPDATE weekly_reviews
+                SET status = ?, finalised_at = ?
+                WHERE user_id = ? AND id = ? AND status = ?
+                """,
+                (
+                    WeeklyReviewStatus.FINALISED.value,
+                    finalised_at,
+                    user_id,
+                    review_id,
+                    WeeklyReviewStatus.DRAFT.value,
+                ),
+            )
+        updated = fetch_weekly_review(conn, review_id=review_id, user_id=user_id)
+        if updated is None:  # pragma: no cover
+            raise LookupError("Weekly review not found after finalisation.")
+        return updated
+
+
+def claim_weekly_review_interpretation(
+    conn,
+    *,
+    review_id: str,
+    provider: str,
+    model: str,
+    prompt_version: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> bool:
+    now = _utc_now()
+    stale_before = datetime.now(UTC) - INTERPRETATION_STALE_AFTER
+    with _transaction(conn):
+        review = fetch_weekly_review(conn, review_id=review_id, user_id=user_id)
+        if review is None:
+            raise LookupError("Weekly review not found.")
+        if review.status is not WeeklyReviewStatus.FINALISED:
+            raise ValueError("Confirm the weekly review before interpreting it.")
+
+        row = _execute(
+            conn,
+            """
+            SELECT status, updated_at
+            FROM weekly_review_interpretations
+            WHERE user_id = ? AND weekly_review_id = ?
+            """,
+            (user_id, review_id),
+        ).fetchone()
+        if row is None:
+            cursor = _execute(
+                conn,
+                """
+                INSERT INTO weekly_review_interpretations (
+                  user_id, weekly_review_id, status, provider, model,
+                  prompt_version, what_went_well, main_risk, one_adjustment,
+                  encouragement, provider_response_id, error_message, created_at,
+                  updated_at, completed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT DO NOTHING
+                """,
+                (
+                    user_id,
+                    review_id,
+                    InterpretationStatus.PENDING.value,
+                    provider,
+                    model,
+                    prompt_version,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    now,
+                    now,
+                    None,
+                ),
+            )
+            if cursor.rowcount == 1:
+                return True
+            row = _execute(
+                conn,
+                """
+                SELECT status, updated_at
+                FROM weekly_review_interpretations
+                WHERE user_id = ? AND weekly_review_id = ?
+                """,
+                (user_id, review_id),
+            ).fetchone()
+            if row is None:  # pragma: no cover
+                raise RuntimeError("Could not claim the weekly interpretation.")
+
+        status = InterpretationStatus(row["status"])
+        updated_at = datetime.fromisoformat(row["updated_at"])
+        if status is InterpretationStatus.COMPLETED:
+            return False
+        if status is InterpretationStatus.PENDING and updated_at >= stale_before:
+            return False
+        _execute(
+            conn,
+            """
+            UPDATE weekly_review_interpretations
+            SET status = ?, provider = ?, model = ?, prompt_version = ?,
+                what_went_well = NULL, main_risk = NULL,
+                one_adjustment = NULL, encouragement = NULL,
+                provider_response_id = NULL, error_message = NULL,
+                updated_at = ?, completed_at = NULL
+            WHERE user_id = ? AND weekly_review_id = ?
+            """,
+            (
+                InterpretationStatus.PENDING.value,
+                provider,
+                model,
+                prompt_version,
+                now,
+                user_id,
+                review_id,
+            ),
+        )
+        return True
+
+
+def complete_weekly_review_interpretation(
+    conn,
+    *,
+    review_id: str,
+    what_went_well: str,
+    main_risk: str,
+    one_adjustment: str,
+    encouragement: str,
+    provider_response_id: str | None,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> None:
+    completed_at = _utc_now()
+    with _transaction(conn):
+        cursor = _execute(
+            conn,
+            """
+            UPDATE weekly_review_interpretations
+            SET status = ?, what_went_well = ?, main_risk = ?,
+                one_adjustment = ?, encouragement = ?,
+                provider_response_id = ?, error_message = NULL,
+                updated_at = ?, completed_at = ?
+            WHERE user_id = ? AND weekly_review_id = ? AND status = ?
+            """,
+            (
+                InterpretationStatus.COMPLETED.value,
+                what_went_well,
+                main_risk,
+                one_adjustment,
+                encouragement,
+                provider_response_id,
+                completed_at,
+                completed_at,
+                user_id,
+                review_id,
+                InterpretationStatus.PENDING.value,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise LookupError("Pending weekly interpretation not found.")
+
+
+def fail_weekly_review_interpretation(
+    conn,
+    *,
+    review_id: str,
+    error_message: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> None:
+    with _transaction(conn):
+        cursor = _execute(
+            conn,
+            """
+            UPDATE weekly_review_interpretations
+            SET status = ?, error_message = ?, updated_at = ?
+            WHERE user_id = ? AND weekly_review_id = ? AND status = ?
+            """,
+            (
+                InterpretationStatus.FAILED.value,
+                error_message.strip()[:500],
+                _utc_now(),
+                user_id,
+                review_id,
+                InterpretationStatus.PENDING.value,
+            ),
+        )
+        if cursor.rowcount != 1:
+            raise LookupError("Pending weekly interpretation not found.")
+
+
+def fetch_weekly_review_interpretation(
+    conn,
+    *,
+    review_id: str,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> WeeklyReviewInterpretation | None:
+    row = _execute(
+        conn,
+        """
+        SELECT weekly_review_id, status, provider, model, prompt_version,
+               what_went_well, main_risk, one_adjustment, encouragement,
+               provider_response_id, created_at, completed_at
+        FROM weekly_review_interpretations
+        WHERE user_id = ? AND weekly_review_id = ?
+        """,
+        (user_id, review_id),
+    ).fetchone()
+    return _weekly_review_interpretation_from_row(row) if row is not None else None
+
+
+def list_weekly_review_interpretations(
+    conn,
+    *,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> dict[str, WeeklyReviewInterpretation]:
+    rows = _execute(
+        conn,
+        """
+        SELECT weekly_review_id, status, provider, model, prompt_version,
+               what_went_well, main_risk, one_adjustment, encouragement,
+               provider_response_id, created_at, completed_at
+        FROM weekly_review_interpretations
+        WHERE user_id = ?
+        """,
+        (user_id,),
+    ).fetchall()
+    return {
+        row["weekly_review_id"]: _weekly_review_interpretation_from_row(row)
+        for row in rows
+    }
+
+
+def fetch_owner_data_bounds(
+    conn,
+    *,
+    user_id: str = DEFAULT_OWNER_ID,
+) -> tuple[date, date] | None:
+    row = _execute(
+        conn,
+        """
+        SELECT MIN(recorded_on) AS earliest, MAX(recorded_on) AS latest
+        FROM (
+          SELECT recorded_on FROM evidence_records WHERE user_id = ?
+          UNION ALL
+          SELECT recorded_on FROM daily_observations WHERE user_id = ?
+          UNION ALL
+          SELECT recorded_on FROM activities WHERE user_id = ?
+          UNION ALL
+          SELECT scheduled_on AS recorded_on FROM planned_sessions WHERE user_id = ?
+        ) AS owner_dates
+        """,
+        (user_id, user_id, user_id, user_id),
+    ).fetchone()
+    if row is None or row["earliest"] is None or row["latest"] is None:
+        return None
+    return date.fromisoformat(row["earliest"]), date.fromisoformat(row["latest"])
+
+
 def database_is_ready(target: DatabaseTarget) -> bool:
     try:
         with connect(target) as conn:
@@ -1319,6 +1768,45 @@ def database_is_ready(target: DatabaseTarget) -> bool:
     except Exception:
         return False
     return True
+
+
+def _weekly_review_from_row(row) -> WeeklyReview:
+    return WeeklyReview(
+        id=row["id"],
+        period_start=date.fromisoformat(row["period_start"]),
+        period_end=date.fromisoformat(row["period_end"]),
+        revision=int(row["revision"]),
+        evidence_fingerprint=row["evidence_fingerprint"],
+        snapshot_json=row["snapshot_json"],
+        status=WeeklyReviewStatus(row["status"]),
+        created_at=datetime.fromisoformat(row["created_at"]),
+        finalised_at=(
+            datetime.fromisoformat(row["finalised_at"])
+            if row["finalised_at"]
+            else None
+        ),
+    )
+
+
+def _weekly_review_interpretation_from_row(row) -> WeeklyReviewInterpretation:
+    return WeeklyReviewInterpretation(
+        weekly_review_id=row["weekly_review_id"],
+        status=InterpretationStatus(row["status"]),
+        provider=row["provider"],
+        model=row["model"],
+        prompt_version=row["prompt_version"],
+        what_went_well=row["what_went_well"],
+        main_risk=row["main_risk"],
+        one_adjustment=row["one_adjustment"],
+        encouragement=row["encouragement"],
+        provider_response_id=row["provider_response_id"],
+        created_at=datetime.fromisoformat(row["created_at"]),
+        completed_at=(
+            datetime.fromisoformat(row["completed_at"])
+            if row["completed_at"]
+            else None
+        ),
+    )
 
 
 def _goal_from_row(row) -> Goal:
@@ -1566,6 +2054,8 @@ def _migrate_legacy_sqlite_tables(conn: sqlite3.Connection) -> None:
         "connector_syncs",
         "connector_connections",
         "goal_revisions",
+        "weekly_reviews",
+        "weekly_review_interpretations",
     ):
         columns = {
             row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()

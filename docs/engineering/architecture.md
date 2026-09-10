@@ -112,6 +112,28 @@ Scheduled handovers, goal relationships and configurable evidence templates stay
 outside this slice. They can build on the same revision history without changing
 the current goal-management contract.
 
+## Confirmed weekly reviews
+
+Ready wraps each completed deterministic read in a durable review lifecycle:
+
+1. The authenticated Weekly read screen materialises missing recent Monday-to-Sunday drafts.
+2. A canonical JSON snapshot contains the evidence read, plan follow-through and the goal revisions that applied at the end of that week.
+3. A SHA-256 fingerprint reuses an unchanged draft. Changed evidence creates the next immutable revision.
+4. The owner checks optional context and plan evidence, then confirms the exact fingerprint shown on screen.
+5. Ready finalises that snapshot before it asks an interpretation provider for anything.
+6. A unique interpretation row claims one request per review revision and stores the structured result. A failed or abandoned claim can be retried without reopening the review.
+
+The AI response contains four fields: what went well, the main risk, one adjustment
+and a concise encouragement. It cannot replace the deterministic Ready status.
+Ready sends the snapshot through the OpenAI Responses API with structured output
+and `store=false`. Production can omit the API key; deterministic review and
+finalisation continue to work.
+
+The first visit backfills at most 52 recent completed weeks to bound one serverless
+request. Ready keeps every materialised draft and finalised revision indefinitely.
+Later reminder work can call the same materialisation boundary before sending the
+Monday email.
+
 ## Private owner and deployment boundary
 
 `app.py` exports the FastAPI application for Vercel discovery. Production fails
@@ -140,7 +162,7 @@ action intended to create a production deployment.
 | Domain | Goals, evidence, readiness rules | Event templates and cross-goal advice |
 | Storage | Local SQLite and managed Postgres in production | Managed migrations and retention controls |
 | Connectors | Garmin adapter, then manual fallback | Calendar, COROS and other evidence sources |
-| Interpretation | Rules first | One cached AI interpretation after weekly confirmation |
+| Interpretation | Rules first, then one confirmed and cached AI read | Provider choice and evaluation |
 
 ## Outset family resemblance
 
@@ -175,7 +197,6 @@ Missing optional context must never force `Building a picture`. That state shoul
 
 ## Immediate follow-on
 
-The Week in Progress screen can now feed the completed review and later confirmation
-flow. Scheduled priority handovers, common goal templates and configurable evidence
-templates remain goal-specific extensions; issue #9 tracks the confirmed, cached AI
-interpretation.
+Selected email reminders can announce a prepared Monday review without generating
+its interpretation. Event records, common goal templates and configurable evidence
+templates remain separate product slices.
