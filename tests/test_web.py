@@ -13,6 +13,7 @@ from outset_ready.domain import (
     ConnectorConnectionStatus,
     ConnectorSyncStatus,
     DailyObservation,
+    EvidenceKind,
     EvidenceSource,
     GoalPriority,
     PlanChangeType,
@@ -24,13 +25,16 @@ from outset_ready.plans import (
     list_plan_revisions,
     list_planned_sessions,
 )
+from outset_ready.reviews import GeneratedInterpretation
 from outset_ready.settings import AppSettings
 from outset_ready.storage import (
+    add_manual_evidence,
     connect,
     fetch_connector_connection,
     finish_connector_sync,
     list_goals,
     list_recent_evidence,
+    list_weekly_reviews,
     load_connector_credentials,
     save_connector_credentials,
     start_connector_sync,
@@ -48,6 +52,27 @@ VALID_TOKEN = (
     '{"di_token":"access","di_refresh_token":"refresh",'
     '"di_client_id":"client"}'
 )
+
+
+class FakeReviewInterpreter:
+    provider = "test"
+    model = "test-model"
+
+    def __init__(self, *, fail: bool = False):
+        self.fail = fail
+        self.snapshots = []
+
+    def interpret(self, snapshot):
+        self.snapshots.append(snapshot)
+        if self.fail:
+            raise RuntimeError("provider unavailable")
+        return GeneratedInterpretation(
+            what_went_well="The completed work supported the current direction.",
+            main_risk="Recovery evidence needs another week.",
+            one_adjustment="Keep the next week unchanged.",
+            encouragement="Use the next review to confirm the pattern.",
+            provider_response_id="response-test",
+        )
 
 
 @pytest.fixture
@@ -152,11 +177,190 @@ def test_weekly_read_is_private_and_shows_completed_week_evidence(client, settin
     response = client.get("/week")
 
     assert response.status_code == 200
-    assert "Your weekly evidence" in response.text
+    assert "Draft review" in response.text
     assert "Progressing" in response.text
     assert "Long easy run" in response.text
     assert "12.0 km" in response.text
     assert "A missing value stays unknown" in response.text
+
+
+def test_owner_confirms_one_review_and_reuses_cached_interpretation(settings):
+    interpreter = FakeReviewInterpreter()
+    with TestClient(
+        create_app(settings=settings, review_interpreter=interpreter)
+    ) as review_client:
+        sign_in(review_client)
+        draft = review_client.get("/week")
+        reviews = None
+        with connect(settings.database_target) as conn:
+            reviews = list_weekly_reviews(conn)
+        review = reviews[0]
+
+        missing_confirmation = review_client.post(
+            f"/week/reviews/{review.id}/confirm",
+            data={"csrf_token": csrf_from(draft)},
+        )
+        assert missing_confirmation.status_code == 400
+        assert interpreter.snapshots == []
+
+        finalised = review_client.post(
+            f"/week/reviews/{review.id}/confirm",
+            data={"csrf_token": csrf_from(draft), "confirmed": "yes"},
+            follow_redirects=False,
+        )
+        assert finalised.status_code == 303
+        assert "notice=finalised" in finalised.headers["location"]
+        assert len(interpreter.snapshots) == 1
+
+        result_page = review_client.get(finalised.headers["location"])
+        assert "Confirmed interpretation" in result_page.text
+        assert "The completed work supported the current direction." in result_page.text
+
+        repeated = review_client.post(
+            f"/week/reviews/{review.id}/confirm",
+            data={"csrf_token": csrf_from(result_page), "confirmed": "yes"},
+            follow_redirects=False,
+        )
+        assert repeated.status_code == 303
+        assert "notice=already-finalised" in repeated.headers["location"]
+        assert len(interpreter.snapshots) == 1
+
+
+def test_owner_can_finalise_a_rules_based_review_without_ai(settings):
+    with TestClient(create_app(settings=settings)) as review_client:
+        sign_in(review_client)
+        draft = review_client.get("/week")
+        with connect(settings.database_target) as conn:
+            review = list_weekly_reviews(conn)[0]
+
+        response = review_client.post(
+            f"/week/reviews/{review.id}/confirm",
+            data={"csrf_token": csrf_from(draft), "confirmed": "yes"},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        assert "notice=finalised-without-ai" in response.headers["location"]
+        with connect(settings.database_target) as conn:
+            saved = list_weekly_reviews(conn)[0]
+        assert saved.status.value == "finalised"
+
+
+def test_changed_evidence_reopens_a_finalised_week_as_a_visible_revision(settings):
+    interpreter = FakeReviewInterpreter()
+    with TestClient(
+        create_app(settings=settings, review_interpreter=interpreter)
+    ) as review_client:
+        sign_in(review_client)
+        draft = review_client.get("/week")
+        with connect(settings.database_target) as conn:
+            first = list_weekly_reviews(conn)[0]
+        review_client.post(
+            f"/week/reviews/{first.id}/confirm",
+            data={"csrf_token": csrf_from(draft), "confirmed": "yes"},
+        )
+
+        with connect(settings.database_target) as conn:
+            add_manual_evidence(
+                conn,
+                recorded_on=first.period_end,
+                kind=EvidenceKind.NOTE,
+                note="Travel changed the available training time.",
+            )
+
+        revised_page = review_client.get("/week")
+        with connect(settings.database_target) as conn:
+            reviews = list_weekly_reviews(conn)
+
+        assert reviews[0].revision == 2
+        assert reviews[0].status.value == "draft"
+        assert reviews[1].status.value == "finalised"
+        assert "Revision 2" in revised_page.text
+        assert "Travel changed the available training time." in revised_page.text
+        assert "Revision 1" in revised_page.text
+
+
+def test_confirmation_stops_when_evidence_changed_after_page_load(settings):
+    interpreter = FakeReviewInterpreter()
+    with TestClient(
+        create_app(settings=settings, review_interpreter=interpreter)
+    ) as review_client:
+        sign_in(review_client)
+        draft = review_client.get("/week")
+        with connect(settings.database_target) as conn:
+            first = list_weekly_reviews(conn)[0]
+            add_manual_evidence(
+                conn,
+                recorded_on=first.period_end,
+                kind=EvidenceKind.NOTE,
+                note="Evidence added after the draft opened.",
+            )
+
+        response = review_client.post(
+            f"/week/reviews/{first.id}/confirm",
+            data={"csrf_token": csrf_from(draft), "confirmed": "yes"},
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        assert "notice=evidence-updated" in response.headers["location"]
+        assert interpreter.snapshots == []
+        with connect(settings.database_target) as conn:
+            reviews = list_weekly_reviews(conn)
+        assert reviews[0].revision == 2
+        assert reviews[0].status.value == "draft"
+
+
+def test_failed_interpretation_keeps_the_finalised_review_and_can_retry(settings):
+    interpreter = FakeReviewInterpreter(fail=True)
+    with TestClient(
+        create_app(settings=settings, review_interpreter=interpreter)
+    ) as review_client:
+        sign_in(review_client)
+        draft = review_client.get("/week")
+        with connect(settings.database_target) as conn:
+            review = list_weekly_reviews(conn)[0]
+
+        failed = review_client.post(
+            f"/week/reviews/{review.id}/confirm",
+            data={"csrf_token": csrf_from(draft), "confirmed": "yes"},
+            follow_redirects=False,
+        )
+        assert failed.status_code == 303
+        assert "notice=interpretation-failed" in failed.headers["location"]
+        failed_page = review_client.get(failed.headers["location"])
+        assert "Your confirmed evidence remains saved" in failed_page.text
+
+        interpreter.fail = False
+        retried = review_client.post(
+            f"/week/reviews/{review.id}/confirm",
+            data={"csrf_token": csrf_from(failed_page), "confirmed": "yes"},
+            follow_redirects=False,
+        )
+        assert retried.status_code == 303
+        assert "notice=finalised" in retried.headers["location"]
+        assert len(interpreter.snapshots) == 2
+
+
+def test_review_confirmation_requires_owner_and_csrf(client, settings):
+    sign_in(client)
+    page = client.get("/week")
+    with connect(settings.database_target) as conn:
+        review = list_weekly_reviews(conn)[0]
+    client.post("/logout", data={"csrf_token": csrf_from(page)})
+
+    unauthenticated = client.post(
+        f"/week/reviews/{review.id}/confirm",
+        data={"csrf_token": "wrong", "confirmed": "yes"},
+        follow_redirects=False,
+    )
+    assert unauthenticated.status_code == 303
+    sign_in(client)
+    invalid_csrf = client.post(
+        f"/week/reviews/{review.id}/confirm",
+        data={"csrf_token": "wrong", "confirmed": "yes"},
+    )
+    assert invalid_csrf.status_code == 403
 
 
 def test_current_week_is_private_and_owner_can_change_manual_plan(client, settings):

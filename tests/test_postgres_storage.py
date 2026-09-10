@@ -15,10 +15,14 @@ from outset_ready.domain import (
 from outset_ready.plans import build_plan_week, create_manual_session
 from outset_ready.storage import (
     add_manual_evidence,
+    claim_weekly_review_interpretation,
+    complete_weekly_review_interpretation,
     connect,
     count_evidence_days,
     database_is_ready,
     ensure_owner,
+    fetch_weekly_review_interpretation,
+    finalise_weekly_review,
     init_db,
     list_goals,
     list_activities_between,
@@ -26,6 +30,7 @@ from outset_ready.storage import (
     list_evidence_between,
     list_recent_activities,
     list_recent_evidence,
+    save_weekly_review_draft,
     upsert_activity,
     upsert_daily_observation,
 )
@@ -41,6 +46,8 @@ def test_postgres_implements_the_ready_storage_contract():
     with connect(POSTGRES_URL) as conn:
         with conn.transaction():
             for table in (
+                "weekly_review_interpretations",
+                "weekly_reviews",
                 "planned_activity_matches",
                 "planned_session_revisions",
                 "planned_sessions",
@@ -89,6 +96,34 @@ def test_postgres_implements_the_ready_storage_contract():
             activity_type=ActivityType.RUN,
             title="Easy run",
         )
+        review = save_weekly_review_draft(
+            conn,
+            period_start=date(2026, 9, 1),
+            period_end=date(2026, 9, 7),
+            evidence_fingerprint="a" * 64,
+            snapshot_json='{"snapshot_version":1}',
+        )
+        finalise_weekly_review(
+            conn,
+            review_id=review.id,
+            expected_fingerprint=review.evidence_fingerprint,
+        )
+        assert claim_weekly_review_interpretation(
+            conn,
+            review_id=review.id,
+            provider="test",
+            model="test-model",
+            prompt_version="v1",
+        )
+        complete_weekly_review_interpretation(
+            conn,
+            review_id=review.id,
+            what_went_well="Evidence recorded.",
+            main_risk="More evidence needed.",
+            one_adjustment="Keep collecting evidence.",
+            encouragement="Review next week.",
+            provider_response_id="test-response",
+        )
 
         assert len(list_goals(conn)) == 4
         assert len(list_recent_evidence(conn)) == 1
@@ -121,4 +156,8 @@ def test_postgres_implements_the_ready_storage_contract():
             period_start=date(2026, 9, 1),
             period_end=date(2026, 9, 7),
         ).planned_sessions == 1
+        assert fetch_weekly_review_interpretation(
+            conn,
+            review_id=review.id,
+        ).what_went_well == "Evidence recorded."
     assert database_is_ready(POSTGRES_URL)

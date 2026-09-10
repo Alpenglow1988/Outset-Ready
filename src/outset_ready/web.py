@@ -32,10 +32,12 @@ from outset_ready.domain import (
     EvidenceSource,
     GoalCategory,
     GoalPriority,
+    InterpretationStatus,
     OPTIONAL_CONTEXT_KINDS,
     PlanChangeReason,
     PlanChangeType,
     PlannedSessionStatus,
+    WeeklyReviewStatus,
 )
 from outset_ready.history import calculate_history_progress
 from outset_ready.periods import current_training_week, last_completed_training_week
@@ -50,6 +52,13 @@ from outset_ready.plans import (
     unmatch_planned_session,
     update_planned_session,
 )
+from outset_ready.reviews import (
+    PROMPT_VERSION,
+    OpenAIWeeklyReviewInterpreter,
+    WeeklyReviewInterpreter,
+    build_review_snapshot,
+    load_review_snapshot,
+)
 from outset_ready.settings import AppSettings, load_app_settings
 from outset_ready.session import SignedSessionMiddleware
 from outset_ready.storage import (
@@ -60,14 +69,24 @@ from outset_ready.storage import (
     count_evidence_days,
     create_goal,
     database_is_ready,
+    claim_weekly_review_interpretation,
+    complete_weekly_review_interpretation,
     fetch_connector_connection,
     fetch_latest_connector_sync,
+    fetch_owner_data_bounds,
+    fetch_weekly_review,
+    fetch_weekly_review_interpretation,
+    fail_weekly_review_interpretation,
+    finalise_weekly_review,
     init_db,
     list_goals_as_of,
     list_connector_syncs,
     list_goals,
     list_recent_activities,
     list_recent_evidence,
+    list_weekly_review_interpretations,
+    list_weekly_reviews,
+    save_weekly_review_draft,
     update_goal,
 )
 from outset_ready.weekly import build_weekly_read
@@ -88,8 +107,17 @@ OPTIONAL_OPTIONS = (
 )
 
 
-def create_app(*, settings: AppSettings | None = None) -> FastAPI:
+def create_app(
+    *,
+    settings: AppSettings | None = None,
+    review_interpreter: WeeklyReviewInterpreter | None = None,
+) -> FastAPI:
     settings = settings or load_app_settings()
+    if review_interpreter is None and settings.openai_api_key:
+        review_interpreter = OpenAIWeeklyReviewInterpreter(
+            api_key=settings.openai_api_key,
+            model=settings.openai_model,
+        )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -100,7 +128,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
         )
         yield
 
-    app = FastAPI(title="Outset Ready", version="0.6.0", lifespan=lifespan)
+    app = FastAPI(title="Outset Ready", version="0.7.0", lifespan=lifespan)
     app.state.settings = settings
     app.add_middleware(
         SignedSessionMiddleware,
@@ -112,6 +140,7 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
     )
     app.mount("/static", StaticFiles(directory=PACKAGE_DIR / "static"), name="static")
     templates = Jinja2Templates(directory=PACKAGE_DIR / "templates")
+    templates.env.filters["date_label"] = _date_label
 
     @app.middleware("http")
     async def private_response_headers(request: Request, call_next):
@@ -734,32 +763,177 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
         )
 
     @app.get("/week")
-    def weekly_read_page(request: Request):
+    def weekly_read_page(
+        request: Request,
+        review_id: str | None = None,
+        notice: str | None = None,
+    ):
         user_id = _require_owner(request, settings)
         today = date.today()
-        period_start, period_end = last_completed_training_week(today)
         with connect(settings.database_target) as conn:
-            goals = list_goals_as_of(
+            _materialise_due_weekly_reviews(conn, today=today, user_id=user_id)
+            reviews = list_weekly_reviews(conn, user_id=user_id)
+            if not reviews:  # pragma: no cover
+                raise HTTPException(status_code=404, detail="No weekly review exists.")
+            selected_review = (
+                fetch_weekly_review(conn, review_id=review_id, user_id=user_id)
+                if review_id
+                else reviews[0]
+            )
+            if selected_review is None:
+                raise HTTPException(status_code=404, detail="Weekly review not found.")
+            interpretation = fetch_weekly_review_interpretation(
                 conn,
-                effective_at=_end_of_day(period_end),
+                review_id=selected_review.id,
                 user_id=user_id,
             )
-            weekly_read = build_weekly_read(
+            interpretations = list_weekly_review_interpretations(
                 conn,
-                period_start=period_start,
-                period_end=period_end,
-                target_weight_kg=_current_weight_target(goals),
                 user_id=user_id,
             )
+            review_history = [
+                {
+                    "review": item,
+                    "interpretation": interpretations.get(item.id),
+                }
+                for item in reviews
+            ]
+
+        snapshot = load_review_snapshot(selected_review.snapshot_json)
+        newer_revision_exists = any(
+            item.period_start == selected_review.period_start
+            and item.revision > selected_review.revision
+            for item in reviews
+        )
+        notices = {
+            "finalised": "Weekly review finalised and the interpretation saved.",
+            "finalised-without-ai": (
+                "Weekly review finalised. AI interpretation is not configured yet."
+            ),
+            "already-finalised": "This review was already finalised.",
+            "evidence-updated": (
+                "The evidence changed, so Ready created a new draft for you to check."
+            ),
+            "interpretation-failed": (
+                "The review is finalised, but the interpretation service did not respond. "
+                "Your confirmed evidence is safe and you can try again."
+            ),
+        }
         return templates.TemplateResponse(
             request=request,
             name="week.html",
             context={
-                "weekly_read": weekly_read,
+                "weekly_read": snapshot["weekly_read"],
+                "review_goals": snapshot["goals"],
+                "review": selected_review,
+                "interpretation": interpretation,
+                "review_history": review_history,
+                "newer_revision_exists": newer_revision_exists,
+                "review_status": WeeklyReviewStatus,
+                "interpretation_status": InterpretationStatus,
+                "ai_available": review_interpreter is not None,
+                "notice": notices.get(notice or ""),
                 "owner_email": settings.owner_email,
                 "csrf_token": _session_csrf_token(request),
                 "persistent_storage": settings.persistent_storage,
             },
+        )
+
+    @app.post("/week/reviews/{review_id}/confirm")
+    def confirm_weekly_review(
+        request: Request,
+        review_id: str,
+        confirmed: str = Form(""),
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        if confirmed != "yes":
+            raise HTTPException(
+                status_code=400,
+                detail="Confirm that you checked the weekly evidence.",
+            )
+
+        with connect(settings.database_target) as conn:
+            review = fetch_weekly_review(conn, review_id=review_id, user_id=user_id)
+            if review is None:
+                raise HTTPException(status_code=404, detail="Weekly review not found.")
+            current = _materialise_weekly_review(
+                conn,
+                period_start=review.period_start,
+                period_end=review.period_end,
+                user_id=user_id,
+            )
+            if current.id != review.id:
+                return RedirectResponse(
+                    url=f"/week?review_id={quote(current.id)}&notice=evidence-updated",
+                    status_code=status.HTTP_303_SEE_OTHER,
+                )
+            finalised = finalise_weekly_review(
+                conn,
+                review_id=review.id,
+                expected_fingerprint=review.evidence_fingerprint,
+                user_id=user_id,
+            )
+
+        if review_interpreter is None:
+            return RedirectResponse(
+                url=(
+                    f"/week?review_id={quote(finalised.id)}"
+                    "&notice=finalised-without-ai"
+                ),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+
+        with connect(settings.database_target) as conn:
+            claimed = claim_weekly_review_interpretation(
+                conn,
+                review_id=finalised.id,
+                provider=review_interpreter.provider,
+                model=review_interpreter.model,
+                prompt_version=PROMPT_VERSION,
+                user_id=user_id,
+            )
+        if not claimed:
+            return RedirectResponse(
+                url=f"/week?review_id={quote(finalised.id)}&notice=already-finalised",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+
+        try:
+            result = review_interpreter.interpret(
+                load_review_snapshot(finalised.snapshot_json)
+            )
+        except Exception as exc:
+            with connect(settings.database_target) as conn:
+                fail_weekly_review_interpretation(
+                    conn,
+                    review_id=finalised.id,
+                    error_message=type(exc).__name__,
+                    user_id=user_id,
+                )
+            return RedirectResponse(
+                url=(
+                    f"/week?review_id={quote(finalised.id)}"
+                    "&notice=interpretation-failed"
+                ),
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+
+        with connect(settings.database_target) as conn:
+            complete_weekly_review_interpretation(
+                conn,
+                review_id=finalised.id,
+                what_went_well=result.what_went_well,
+                main_risk=result.main_risk,
+                one_adjustment=result.one_adjustment,
+                encouragement=result.encouragement,
+                provider_response_id=result.provider_response_id,
+                user_id=user_id,
+            )
+        return RedirectResponse(
+            url=f"/week?review_id={quote(finalised.id)}&notice=finalised",
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     @app.post("/evidence")
@@ -774,15 +948,25 @@ def create_app(*, settings: AppSettings | None = None) -> FastAPI:
         user_id = _require_owner(request, settings)
         _require_csrf(request, csrf_token)
         parsed_value = float(value) if value.strip() else None
+        evidence_date = date.fromisoformat(recorded_on)
         with connect(settings.database_target) as conn:
             add_manual_evidence(
                 conn,
-                recorded_on=date.fromisoformat(recorded_on),
+                recorded_on=evidence_date,
                 kind=EvidenceKind(kind),
                 value=parsed_value,
                 note=note,
                 user_id=user_id,
             )
+            _, last_completed_end = last_completed_training_week(date.today())
+            if evidence_date <= last_completed_end:
+                period_start = evidence_date - timedelta(days=evidence_date.weekday())
+                _materialise_weekly_review(
+                    conn,
+                    period_start=period_start,
+                    period_end=period_start + timedelta(days=6),
+                    user_id=user_id,
+                )
         return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
 
     def render_connections(
@@ -1070,8 +1254,77 @@ def _current_weight_target(goals) -> float | None:
     return None
 
 
+def _materialise_due_weekly_reviews(conn, *, today: date, user_id: str) -> None:
+    latest_start, _ = last_completed_training_week(today)
+    bounds = fetch_owner_data_bounds(conn, user_id=user_id)
+    if bounds is None:
+        first_start = latest_start
+    else:
+        earliest = bounds[0]
+        first_start = earliest - timedelta(days=earliest.weekday())
+        first_start = min(first_start, latest_start)
+
+    earliest_supported = latest_start - timedelta(weeks=51)
+    first_start = max(first_start, earliest_supported)
+    existing_periods = {
+        review.period_start for review in list_weekly_reviews(conn, user_id=user_id)
+    }
+    period_start = first_start
+    while period_start <= latest_start:
+        if period_start not in existing_periods or period_start == latest_start:
+            period_end = period_start + timedelta(days=6)
+            _materialise_weekly_review(
+                conn,
+                period_start=period_start,
+                period_end=period_end,
+                user_id=user_id,
+            )
+        period_start += timedelta(weeks=1)
+
+
+def _materialise_weekly_review(
+    conn,
+    *,
+    period_start: date,
+    period_end: date,
+    user_id: str,
+):
+    goals = list_goals_as_of(
+        conn,
+        effective_at=_end_of_day(period_end),
+        user_id=user_id,
+    )
+    weekly_read = build_weekly_read(
+        conn,
+        period_start=period_start,
+        period_end=period_end,
+        target_weight_kg=_current_weight_target(goals),
+        user_id=user_id,
+    )
+    snapshot = build_review_snapshot(weekly_read, goals)
+    return save_weekly_review_draft(
+        conn,
+        period_start=period_start,
+        period_end=period_end,
+        evidence_fingerprint=snapshot.fingerprint,
+        snapshot_json=snapshot.json,
+        user_id=user_id,
+    )
+
+
 def _end_of_day(value: date) -> datetime:
     return datetime.combine(value, time.max, tzinfo=UTC)
+
+
+def _date_label(value, format_string: str) -> str:
+    if isinstance(value, str):
+        try:
+            value = date.fromisoformat(value)
+        except ValueError:
+            return value
+    if isinstance(value, (date, datetime)):
+        return value.strftime(format_string)
+    return ""
 
 
 def _parse_goal_fields(

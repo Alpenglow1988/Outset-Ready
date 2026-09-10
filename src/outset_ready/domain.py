@@ -96,6 +96,17 @@ class ConnectorConnectionStatus(StrEnum):
     RECONNECT_REQUIRED = "reconnect_required"
 
 
+class WeeklyReviewStatus(StrEnum):
+    DRAFT = "draft"
+    FINALISED = "finalised"
+
+
+class InterpretationStatus(StrEnum):
+    PENDING = "pending"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 OPTIONAL_CONTEXT_KINDS = frozenset(
     {
         EvidenceKind.ALCOHOL_UNITS,
@@ -234,6 +245,35 @@ class ConnectorConnection:
     status: ConnectorConnectionStatus
     connected_at: datetime | None
     updated_at: datetime
+
+
+@dataclass(frozen=True)
+class WeeklyReview:
+    id: str
+    period_start: date
+    period_end: date
+    revision: int
+    evidence_fingerprint: str
+    snapshot_json: str
+    status: WeeklyReviewStatus
+    created_at: datetime
+    finalised_at: datetime | None = None
+
+
+@dataclass(frozen=True)
+class WeeklyReviewInterpretation:
+    weekly_review_id: str
+    status: InterpretationStatus
+    provider: str
+    model: str
+    prompt_version: str
+    what_went_well: str | None
+    main_risk: str | None
+    one_adjustment: str | None
+    encouragement: str | None
+    provider_response_id: str | None
+    created_at: datetime
+    completed_at: datetime | None = None
 
 
 def validate_evidence(record: EvidenceRecord) -> None:

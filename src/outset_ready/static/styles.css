@@ -285,6 +285,35 @@ textarea { resize: vertical; }
 
 .weekly-summary { margin-bottom: 46px; }
 .calculation-note { max-width: 250px; font-size: 12px; }
+.review-action-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, .75fr);
+  gap: 36px;
+  margin: 30px 0 0;
+  border-color: var(--ink);
+}
+.review-action-panel > div > p { color: var(--muted); line-height: 1.6; }
+.review-action-panel form { margin: 0; align-content: start; }
+.review-links { display: flex; flex-wrap: wrap; gap: 18px; margin-bottom: 0; }
+.review-links a { color: var(--ink); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.confirmation-check { grid-template-columns: 18px 1fr; gap: 10px; align-items: start; }
+.confirmation-check input { width: 16px; height: 16px; margin: 2px 0 0; }
+.confirmation-check span { color: var(--ink); font-size: 12px; line-height: 1.5; }
+.coach-review-panel { margin: 30px 0 0; border-color: var(--pine); }
+.review-state { color: var(--pine); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.coach-review-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 22px 0 0; border: 1px solid var(--line); }
+.coach-review-grid div { min-height: 145px; padding: 20px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.coach-review-grid div:nth-child(2n) { border-right: 0; }
+.coach-review-grid div:nth-last-child(-n + 2) { border-bottom: 0; }
+.coach-review-grid dt { margin-bottom: 12px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.coach-review-grid dd { margin: 0; font-family: "Iowan Old Style", "Palatino Linotype", serif; font-size: 20px; line-height: 1.4; }
+.weekly-review-history { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0; padding: 0; list-style: none; }
+.weekly-review-history li { border: 1px solid var(--line); background: var(--surface); }
+.weekly-review-history li.is-current { border-color: var(--ink); }
+.weekly-review-history a { display: grid; grid-template-columns: 1fr auto; gap: 7px 16px; padding: 16px 18px; color: var(--ink); text-decoration: none; }
+.weekly-review-history span { font-family: "Iowan Old Style", "Palatino Linotype", serif; font-size: 17px; }
+.weekly-review-history strong { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.weekly-review-history small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; text-transform: capitalize; }
 .metric-section { margin-top: 58px; }
 .metric-grid {
   display: grid;
@@ -451,6 +480,7 @@ textarea { resize: vertical; }
   .goal-management-layout { grid-template-columns: 1fr; }
   .add-goal-panel { position: static; }
   .week-lower-grid { grid-template-columns: 1fr; }
+  .review-action-panel { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {
@@ -486,6 +516,9 @@ textarea { resize: vertical; }
   .plan-follow-through-summary { grid-template-columns: 1fr; }
   .plan-follow-through-summary p { border-right: 0; border-bottom: 1px solid var(--line); }
   .plan-follow-through-summary p:last-child { border-bottom: 0; }
+  .coach-review-grid, .weekly-review-history { grid-template-columns: 1fr; }
+  .coach-review-grid div, .coach-review-grid div:nth-child(2n), .coach-review-grid div:nth-last-child(-n + 2) { border-right: 0; border-bottom: 1px solid var(--line); }
+  .coach-review-grid div:last-child { border-bottom: 0; }
   .login-shell { padding: 28px 0; }
   .login-card { margin-top: 30px; padding: 26px 22px; }
 }

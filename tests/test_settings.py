@@ -21,6 +21,21 @@ def test_local_settings_use_sqlite_and_insecure_cookie_for_http():
     assert settings.database_target == Path("data/outset_ready.sqlite")
     assert not settings.secure_cookies
     assert not settings.persistent_storage
+    assert settings.openai_api_key is None
+    assert settings.openai_model == "gpt-5.6-luna"
+
+
+def test_weekly_interpretation_settings_are_optional_and_configurable():
+    settings = load_app_settings(
+        {
+            **BASE_ENVIRONMENT,
+            "OUTSET_READY_OPENAI_API_KEY": "test-key",
+            "OUTSET_READY_OPENAI_MODEL": "review-model",
+        }
+    )
+
+    assert settings.openai_api_key == "test-key"
+    assert settings.openai_model == "review-model"
 
 
 def test_vercel_requires_durable_postgres():
