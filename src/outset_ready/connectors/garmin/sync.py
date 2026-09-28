@@ -19,13 +19,14 @@ from outset_ready.connectors.garmin.raw_store import (
     save_activities_payload,
     save_daily_payload,
 )
-from outset_ready.domain import ConnectorSyncStatus
+from outset_ready.domain import ConnectorSyncStatus, EvidenceSource
 from outset_ready.storage import (
     DEFAULT_OWNER_ID,
     DatabaseTarget,
     connect,
     finish_connector_sync,
     init_db,
+    list_daily_observations_between,
     start_connector_sync,
     upsert_activity,
     upsert_daily_observation,
@@ -66,6 +67,7 @@ def sync_garmin(
     owner_email: str = "owner@local",
     user_id: str = DEFAULT_OWNER_ID,
     save_raw_payloads: bool = True,
+    bounded_activity_range: bool = False,
 ) -> GarminSyncStats:
     if days < 1:
         raise ValueError("days must be at least 1")
@@ -74,9 +76,10 @@ def sync_garmin(
 
     end_date = end_date or date.today()
     start_date = end_date - timedelta(days=days - 1)
-    activity_start_date = min(
-        start_date,
-        end_date - timedelta(days=MINIMUM_ACTIVITY_LOOKBACK_DAYS - 1),
+    activity_start_date = (
+        start_date
+        if bounded_activity_range
+        else min(start_date, end_date - timedelta(days=MINIMUM_ACTIVITY_LOOKBACK_DAYS - 1))
     )
     database_target = database_target or settings.db_path
 
@@ -105,6 +108,7 @@ def sync_garmin(
         with connect(database_target) as conn:
             for payload_date in _date_range(start_date, end_date):
                 payloads: dict[str, object] = {}
+                warnings_before_day = len(warnings)
                 try:
                     payload = client.fetch_user_summary(payload_date)
                 except GarminAuthenticationRequiredError:
@@ -147,13 +151,26 @@ def sync_garmin(
                         else f"garmin:daily:{payload_date.isoformat()}"
                     ),
                 )
+                if bounded_activity_range and len(warnings) > warnings_before_day:
+                    previous = list_daily_observations_between(
+                        conn, start_date=payload_date, end_date=payload_date,
+                        user_id=user_id,
+                    )
+                    if any(item.source is EvidenceSource.GARMIN for item in previous):
+                        # A failed endpoint cannot tell us whether a missing value
+                        # has disappeared or simply could not be fetched today.
+                        daily_records += 1
+                        continue
                 upsert_daily_observation(conn, observation, user_id=user_id)
                 daily_records += 1
 
             try:
-                activities = client.fetch_activities_since(
-                    activity_start_date,
-                    page_size=activity_page_size,
+                activities = (
+                    client.fetch_activities_between(activity_start_date, end_date)
+                    if bounded_activity_range
+                    else client.fetch_activities_since(
+                        activity_start_date, page_size=activity_page_size,
+                    )
                 )
             except GarminAuthenticationRequiredError:
                 raise

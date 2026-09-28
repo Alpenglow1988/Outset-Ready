@@ -82,6 +82,28 @@ def test_activity_pagination_stops_at_date_and_deduplicates(monkeypatch, tmp_pat
     assert [item["activityId"] for item in activities] == [1, 2, 3]
 
 
+def test_calendar_activity_fetch_uses_selected_date_range(monkeypatch, tmp_path):
+    calls = []
+
+    class FakeGarmin:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def login(self, tokenstore=None):
+            pass
+
+        def get_activities_by_date(self, startdate, enddate):
+            calls.append((startdate, enddate))
+            return [{"activityId": 1, "startTimeLocal": "2025-01-06T07:00:00"}]
+
+    monkeypatch.setattr("outset_ready.connectors.garmin.client.Garmin", FakeGarmin)
+    client = GarminClient(settings(tmp_path))
+    client.login()
+
+    assert len(client.fetch_activities_between(date(2025, 1, 6), date(2025, 1, 12))) == 1
+    assert calls == [("2025-01-06", "2025-01-12")]
+
+
 def test_scheduled_workouts_span_months_filter_window_and_deduplicate(
     monkeypatch, tmp_path
 ):

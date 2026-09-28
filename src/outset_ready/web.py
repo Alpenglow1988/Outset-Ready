@@ -545,6 +545,9 @@ def create_app(
             heading = f"{selected:%B %Y}"
 
         with connect(settings.database_target) as conn:
+            garmin_connection = fetch_connector_connection(
+                conn, connector="garmin", user_id=user_id,
+            )
             sessions = list_planned_sessions(
                 conn, start_date=start, end_date=end, include_removed=True,
                 user_id=user_id,
@@ -563,6 +566,7 @@ def create_app(
             day = start + timedelta(days=offset)
             days.append({
                 "date": day,
+                "week_start": day - timedelta(days=day.weekday()),
                 "sessions": [item for item in sessions if item.scheduled_on == day],
                 "activities": [item for item in activities if item.recorded_on == day],
                 "evidence": [item for item in evidence if item.recorded_on == day
@@ -594,10 +598,85 @@ def create_app(
                 "owner_email": settings.owner_email,
                 "csrf_token": _session_csrf_token(request),
                 "persistent_storage": settings.persistent_storage,
+                "garmin_connection": garmin_connection,
+                "today": date.today(),
                 "current_week_start": current_training_week(date.today())[0],
                 "current_week_end": current_training_week(date.today())[1],
-                "notice": "Evidence added." if notice == "added" else None,
+                "notice": {
+                    "added": "Evidence added.",
+                    "fetched": "Garmin evidence checked for this week. Existing entries were updated where Garmin supplied newer data.",
+                    "fetched-with-warnings": "Garmin returned some evidence, but one or more parts could not be checked. Review Connections for sync details.",
+                    "plan-fetched": "Garmin's planned workouts checked for this week.",
+                    "reconnect": "Garmin needs a saved connection or a replacement token. Open Connections to set it up.",
+                    "busy": "A Garmin sync is running. Wait for it to finish, then try this week again.",
+                    "fetch-failed": "Garmin could not finish this week. Check the dates below and try again. Your manual entries remain available.",
+                }.get(notice or ""),
             },
+        )
+
+    @app.post("/calendar/fetch-week")
+    def fetch_calendar_week(
+        request: Request,
+        week_start: str = Form(...),
+        on: str = Form(...),
+        view: str = Form("week"),
+        optional: bool = Form(False),
+        source: str = Form("garmin"),
+        csrf_token: str = Form(...),
+    ):
+        user_id = _require_owner(request, settings)
+        _require_csrf(request, csrf_token)
+        try:
+            start = date.fromisoformat(week_start)
+            selected = date.fromisoformat(on)
+            end_of_week = start + timedelta(days=6)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid calendar date.") from exc
+        except OverflowError as exc:
+            raise HTTPException(status_code=400, detail="Invalid calendar week.") from exc
+        try:
+            if view == "month":
+                first = selected.replace(day=1)
+                last = first.replace(day=monthrange(first.year, first.month)[1])
+                visible_start = first - timedelta(days=first.weekday())
+                visible_end = last + timedelta(days=6 - last.weekday())
+                selected_week_visible = visible_start <= start <= visible_end
+            else:
+                selected_week_visible = start <= selected <= end_of_week
+        except OverflowError as exc:
+            raise HTTPException(status_code=400, detail="Invalid calendar week.") from exc
+        if (
+            start.weekday() != 0
+            or not selected_week_visible
+            or view not in {"week", "month"}
+            or source != "garmin"
+        ):
+            raise HTTPException(status_code=400, detail="Invalid calendar week or source.")
+
+        try:
+            if start > date.today():
+                import_hosted_garmin_plan(
+                    settings, user_id=user_id,
+                    start_date=start, end_date=end_of_week,
+                )
+                notice = "plan-fetched"
+            else:
+                end = min(end_of_week, date.today())
+                stats = sync_hosted_garmin(
+                    settings, user_id=user_id, days=(end - start).days + 1,
+                    end_date=end, bounded_activity_range=True,
+                )
+                notice = "fetched-with-warnings" if stats.warnings else "fetched"
+        except ConnectorSyncAlreadyRunning:
+            notice = "busy"
+        except (GarminAuthenticationRequiredError, GarminConnectionUnavailable):
+            notice = "reconnect"
+        except GarminConnectorError:
+            notice = "fetch-failed"
+        return RedirectResponse(
+            url=(f"/calendar?view={view}&on={selected.isoformat()}"
+                 f"&optional={int(optional)}&notice={notice}"),
+            status_code=status.HTTP_303_SEE_OTHER,
         )
 
     @app.post("/week/current/garmin")

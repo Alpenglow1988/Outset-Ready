@@ -11,8 +11,11 @@ from outset_ready.connectors.garmin.client import (
 )
 from outset_ready.connectors.garmin.config import GarminSettings
 from outset_ready.connectors.garmin.sync import sync_garmin
-from outset_ready.domain import ConnectorSyncStatus
-from outset_ready.storage import connect, fetch_latest_connector_sync
+from outset_ready.domain import ConnectorSyncStatus, DailyObservation, EvidenceSource
+from outset_ready.storage import (
+    connect, fetch_latest_connector_sync, init_db,
+    list_daily_observations_between, upsert_daily_observation,
+)
 
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
@@ -67,6 +70,11 @@ class FixtureClient:
         self.page_size = page_size
         return self.activities
 
+    def fetch_activities_between(self, start_date, end_date):
+        self.activity_start_date = start_date
+        self.activity_end_date = end_date
+        return self.activities
+
 
 def test_sync_is_idempotent_and_records_partial_endpoint_failure(tmp_path):
     garmin_settings = settings(tmp_path)
@@ -114,6 +122,53 @@ def test_sync_is_idempotent_and_records_partial_endpoint_failure(tmp_path):
     )
     assert raw_summary.exists()
     assert json.loads(raw_summary.read_text(encoding="utf-8"))["calendarDate"] == "2026-09-03"
+
+
+def test_calendar_sync_uses_exact_week_range_for_older_activities(tmp_path):
+    clients = []
+
+    def client_factory(value):
+        client = FixtureClient(value)
+        clients.append(client)
+        return client
+
+    stats = sync_garmin(
+        settings(tmp_path), days=7, end_date=date(2025, 1, 12),
+        bounded_activity_range=True, client_factory=client_factory,
+        save_raw_payloads=False,
+    )
+
+    assert stats.start_date == date(2025, 1, 6)
+    assert clients[0].activity_start_date == date(2025, 1, 6)
+    assert clients[0].activity_end_date == date(2025, 1, 12)
+    assert stats.activity_records == 0  # fixture activities belong to another week
+
+
+def test_calendar_retry_keeps_previous_day_when_optional_endpoint_fails(tmp_path):
+    garmin_settings = settings(tmp_path)
+    init_db(garmin_settings.db_path)
+    with connect(garmin_settings.db_path) as conn:
+        upsert_daily_observation(
+            conn,
+            DailyObservation(
+                recorded_on=date(2026, 9, 2), source=EvidenceSource.GARMIN,
+                weight_kg=92.4, stress_score=34,
+            ),
+        )
+
+    result = sync_garmin(
+        garmin_settings, days=2, end_date=date(2026, 9, 3),
+        bounded_activity_range=True, client_factory=FixtureClient,
+        save_raw_payloads=False,
+    )
+    with connect(garmin_settings.db_path) as conn:
+        old_day = list_daily_observations_between(
+            conn, start_date=date(2026, 9, 2), end_date=date(2026, 9, 2),
+        )[0]
+
+    assert result.warnings
+    assert old_day.weight_kg == 92.4
+    assert old_day.stress_score == 34
 
 
 def test_login_failure_is_recorded_without_exposing_credentials(tmp_path):

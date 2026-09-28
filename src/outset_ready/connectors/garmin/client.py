@@ -159,6 +159,20 @@ class GarminClient:
 
         return activities
 
+    def fetch_activities_between(
+        self, start_date: date, end_date: date
+    ) -> list[dict[str, Any]]:
+        if end_date < start_date:
+            raise ValueError("The activity end date cannot precede its start date.")
+        return _coerce_activity_list(
+            self._call(
+                "get_activities_by_date",
+                "activities by date",
+                start_date.isoformat(),
+                end_date.isoformat(),
+            )
+        )
+
     def fetch_scheduled_workouts(
         self,
         start_date: date,

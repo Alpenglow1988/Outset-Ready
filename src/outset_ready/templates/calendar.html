@@ -53,6 +53,22 @@
             <a class="quiet-button" href="{{ optional_url }}">{{ 'Hide' if optional else 'Show' }} optional context</a>
           </div>
         </div>
+        {% if garmin_connection and garmin_connection.status.value != 'reconnect_required' %}
+          {% if view == 'week' %}
+            <form class="calendar-fetch" method="post" action="/calendar/fetch-week" data-pending>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="source" value="garmin">
+              <input type="hidden" name="week_start" value="{{ selected_day.week_start.isoformat() }}">
+              <input type="hidden" name="on" value="{{ selected_day.date.isoformat() }}">
+              <input type="hidden" name="view" value="week">
+              <input type="hidden" name="optional" value="{{ optional | int }}">
+              <button class="primary-button" type="submit" data-pending-label="Fetching Garmin">Fetch week from Garmin</button>
+              <span>{{ 'Planned workouts' if selected_day.week_start > today else 'Activities and health evidence through today' }}</span>
+            </form>
+          {% endif %}
+        {% else %}
+          <p><a class="text-link" href="/connections">Connect or reconnect Garmin</a> to fetch a week.</p>
+        {% endif %}
         {% if notice %}<p class="calendar-notice" role="status">{{ notice }}</p>{% endif %}
         <p class="calendar-legend">Planned sessions · Completed activities · Measurements and context. An empty date means Ready has no entry for it.</p>
         <div class="calendar-grid" aria-label="{{ heading }} calendar">
@@ -68,6 +84,23 @@
               {% if day.activities %}<span class="calendar-count completed">{{ day.activities | length }} completed</span>{% endif %}
               {% if day.evidence or day.observations %}<span class="calendar-count evidence">Evidence</span>{% endif %}
             </a>
+            {% if view == 'month' and loop.index is divisibleby 7 %}
+              <div class="calendar-week-actions">
+                <span>Week of {{ day.week_start.strftime('%d %b') }}</span>
+                {% if garmin_connection and garmin_connection.status.value != 'reconnect_required' %}
+                  <form method="post" action="/calendar/fetch-week" data-pending>
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="source" value="garmin">
+                    <input type="hidden" name="week_start" value="{{ day.week_start.isoformat() }}">
+                    <input type="hidden" name="on" value="{{ selected_day.date.isoformat() }}">
+                    <input type="hidden" name="view" value="month">
+                    <input type="hidden" name="optional" value="{{ optional | int }}">
+                    <button class="quiet-button" type="submit" data-pending-label="Fetching Garmin">Fetch week from Garmin</button>
+                  </form>
+                {% endif %}
+                <span>{{ 'Planned workouts' if day.week_start > today else 'Activities and health evidence' }}</span>
+              </div>
+            {% endif %}
           {% endfor %}
         </div>
 
