@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Calendar · Outset Ready</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='/styles.css') }}">
+    <script src="{{ url_for('static', path='/app.js') }}" defer></script>
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="Outset Ready home">
+          <img class="brand-mark" src="{{ url_for('static', path='/outset-mark.svg') }}" alt="">
+          <span>Outset <strong>Ready</strong></span>
+        </a>
+        <nav aria-label="Main navigation">
+          <a class="nav-link" href="/">Overview</a>
+          <a class="nav-link active" href="/calendar" aria-current="page">Calendar</a>
+          <a class="nav-link" href="/week/current">Week in progress</a>
+          <a class="nav-link" href="/week">Weekly read</a>
+          <a class="nav-link" href="/goals">Goals</a>
+          <span class="nav-link disabled">Events</span>
+          <a class="nav-link" href="/connections">Connections</a>
+        </nav>
+        <div class="sidebar-footer">
+          <p class="sidebar-note">{{ owner_email }}<br>{% if persistent_storage %}Persistent private data{% else %}Local development data{% endif %}</p>
+          <form class="logout-form" method="post" action="/logout">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button class="nav-link logout-button" type="submit">Sign out</button>
+          </form>
+        </div>
+      </aside>
+
+      <main>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Plans and evidence</p>
+            <h1>Your calendar</h1>
+            <p class="lede">See what you planned, what you did and the context you chose to record.</p>
+          </div>
+        </header>
+
+        <div class="calendar-toolbar" aria-label="Calendar controls">
+          <div class="calendar-pager">
+            <a class="quiet-button" href="{{ previous_url }}" aria-label="Previous {{ view }}">Previous</a>
+            <strong>{{ heading }}</strong>
+            <a class="quiet-button" href="{{ next_url }}" aria-label="Next {{ view }}">Next</a>
+          </div>
+          <div class="calendar-switch">
+            <a class="quiet-button {% if view == 'week' %}calendar-active{% endif %}" href="{{ week_url }}" {% if view == 'week' %}aria-current="page"{% endif %}>Week</a>
+            <a class="quiet-button {% if view == 'month' %}calendar-active{% endif %}" href="{{ month_url }}" {% if view == 'month' %}aria-current="page"{% endif %}>Month</a>
+            <a class="quiet-button" href="{{ optional_url }}">{{ 'Hide' if optional else 'Show' }} optional context</a>
+          </div>
+        </div>
+        {% if notice %}<p class="calendar-notice" role="status">{{ notice }}</p>{% endif %}
+        <p class="calendar-legend">Planned sessions · Completed activities · Measurements and context. An empty date means Ready has no entry for it.</p>
+        <div class="calendar-grid" aria-label="{{ heading }} calendar">
+          {% for label in ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun') %}
+            <span class="calendar-weekday">{{ label }}</span>
+          {% endfor %}
+          {% for day in days %}
+            <a class="calendar-cell {% if day.date == selected_day.date %}calendar-selected{% endif %} {% if not day.in_month %}calendar-outside{% endif %}"
+               href="/calendar?view={{ view }}&amp;on={{ day.date.isoformat() }}&amp;optional={{ optional | int }}"
+               {% if day.date == selected_day.date %}aria-current="date"{% endif %}>
+              <strong>{{ day.date.day }}</strong>
+              {% if day.sessions %}<span class="calendar-count">{{ day.sessions | length }} planned</span>{% endif %}
+              {% if day.activities %}<span class="calendar-count completed">{{ day.activities | length }} completed</span>{% endif %}
+              {% if day.evidence or day.observations %}<span class="calendar-count evidence">Evidence</span>{% endif %}
+            </a>
+          {% endfor %}
+        </div>
+
+        <div class="calendar-detail">
+          <section class="panel" aria-labelledby="selected-day-title">
+            <p class="eyebrow">Selected date</p>
+            <h2 id="selected-day-title">{{ selected_day.date.strftime('%A %d %B %Y') }}</h2>
+            {% if selected_day.sessions %}
+              <h3>Planned</h3>
+              <ul class="calendar-items">
+                {% for item in selected_day.sessions %}
+                  <li><strong>{{ item.title }}</strong> · {{ item.activity_type.value | replace('_', ' ') }} · {{ item.status.value }} <span>{{ item.source.value }}</span></li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+            {% if selected_day.activities %}
+              <h3>Completed</h3>
+              <ul class="calendar-items">
+                {% for item in selected_day.activities %}
+                  <li><strong>{{ item.name or item.activity_type.value | replace('_', ' ') }}</strong>{% if item.duration_seconds is not none %} · {{ (item.duration_seconds / 60) | round | int }} min{% endif %} <span>{{ item.source.value }}</span></li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+            {% if selected_day.evidence or selected_day.observations %}
+              <h3>Evidence</h3>
+              <ul class="calendar-items">
+                {% for item in selected_day.evidence %}
+                  <li><strong>{{ item.kind.value | replace('_', ' ') }}</strong> · {% if item.value is not none %}{{ '%g' | format(item.value) }} {{ item.unit or '' }}{% else %}{{ item.note }}{% endif %} <span>{{ item.source.value }}</span></li>
+                {% endfor %}
+                {% for item in selected_day.observations %}
+                  <li><strong>Daily observation</strong>{% if item.weight_kg is not none %} · {{ '%g' | format(item.weight_kg) }} kg{% endif %}{% if item.steps is not none %} · {{ item.steps }} steps{% endif %}{% if item.sleep_hours is not none %} · {{ '%g' | format(item.sleep_hours) }} h sleep{% endif %} <span>{{ item.source.value }}</span></li>
+                {% endfor %}
+              </ul>
+            {% endif %}
+            {% if not (selected_day.sessions or selected_day.activities or selected_day.evidence or selected_day.observations) %}
+              <p>No entries recorded for this date.</p>
+            {% endif %}
+            {% if current_week_start <= selected_day.date <= current_week_end %}
+              <p><a class="text-link" href="/week/current">Manage the current week's plan</a> · <a class="text-link" href="/week">Weekly reviews</a></p>
+            {% endif %}
+          </section>
+
+          <section class="panel add-panel" aria-labelledby="calendar-add-title">
+            <p class="eyebrow">Manual entry</p>
+            <h2 id="calendar-add-title">Add evidence for this date</h2>
+            <form method="post" action="/evidence" data-pending>
+              <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+              <input type="hidden" name="return_to" value="{{ return_to }}">
+              <label>Date<input type="date" name="recorded_on" value="{{ selected_day.date.isoformat() }}" required></label>
+              <label>Evidence
+                <select name="kind" required>
+                  {% for value, label in evidence_options %}<option value="{{ value.value }}">{{ label }}</option>{% endfor %}
+                  <optgroup label="Optional context">
+                    {% for value, label in optional_options %}<option value="{{ value.value }}">{{ label }}</option>{% endfor %}
+                  </optgroup>
+                </select>
+              </label>
+              <label>Value <span>Leave blank for a context note</span><input type="number" name="value" step="any" inputmode="decimal"></label>
+              <label>Note <span>Required for a context note</span><textarea name="note" rows="3"></textarea></label>
+              <button class="primary-button" type="submit" data-pending-label="Adding evidence">Add evidence</button>
+            </form>
+          </section>
+        </div>
+      </main>
+    </div>
+  </body>
+</html>

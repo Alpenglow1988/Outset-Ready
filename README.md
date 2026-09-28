@@ -33,6 +33,7 @@ The first nine application slices now provide a private, durable owner workspace
 - Per-metric coverage so missing Garmin values remain visible and unknown.
 - Pending states that disable slow forms and protect against duplicate submissions.
 - A live Monday-to-Sunday Week in Progress workspace without daily judgement.
+- A private web calendar with week and month views of dated plans, activities and evidence, plus date-first manual entry.
 - Garmin Calendar planned-workout import behind the existing encrypted connection.
 - Manual planned sessions when the plan lives outside Garmin.
 - Immutable provider snapshots and append-only plan revision history.
@@ -141,6 +142,13 @@ moved, replaced, shortened, skipped or restored without erasing what the provide
 originally supplied. Ready only auto-matches a completed activity when exactly one
 same-day, same-type candidate exists; use the match control when the choice is
 ambiguous.
+
+Open `Calendar` to move between weeks or months, inspect a date, and add missing
+manual evidence for it. The calendar reads existing Garmin and manual records;
+optional alcohol, calories and protein can be shown or hidden. It does not run AI
+when you browse or enter data. Planned and completed work appear separately so
+an unmatched activity is not presented as a completed plan. The current week
+still owns plan edits and matching, while `Weekly read` owns confirmed reviews.
 
 Open `Weekly read` after Sunday. Ready prepares drafts for completed weeks covered
 by the recent evidence history. Check the optional context and plan follow-through,
