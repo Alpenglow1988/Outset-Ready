@@ -999,12 +999,16 @@ def create_app(
                 conn,
                 user_id=user_id,
             )
-            review_history = [
-                {
-                    "review": item,
-                    "interpretation": interpretations.get(item.id),
-                }
-                for item in reviews
+            review_history = []
+            for item in reviews:
+                if not review_history or review_history[-1]["review"].period_start != item.period_start:
+                    review_history.append({
+                        "review": item,
+                        "interpretation": interpretations.get(item.id),
+                    })
+            selected_week_revisions = [
+                item for item in reviews
+                if item.period_start == selected_review.period_start
             ]
 
         snapshot = load_review_snapshot(selected_review.snapshot_json)
@@ -1036,6 +1040,7 @@ def create_app(
                 "review": selected_review,
                 "interpretation": interpretation,
                 "review_history": review_history,
+                "selected_week_revisions": selected_week_revisions,
                 "newer_revision_exists": newer_revision_exists,
                 "review_status": WeeklyReviewStatus,
                 "interpretation_status": InterpretationStatus,
