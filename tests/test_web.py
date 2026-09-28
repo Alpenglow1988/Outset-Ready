@@ -138,6 +138,57 @@ def test_owner_can_sign_in_and_see_reference_goal_stack(client):
     assert client.get("/static/outset-mark.svg").status_code == 200
 
 
+def test_calendar_is_private_and_displays_dated_plan_activity_and_evidence(client, settings):
+    assert client.get("/calendar", follow_redirects=False).status_code == 303
+    sign_in(client)
+    day = date(2026, 9, 14)
+    with connect(settings.database_target) as conn:
+        create_manual_session(
+            conn, scheduled_on=day, activity_type=ActivityType.RUN,
+            title="Easy run", user_id=settings.owner_id,
+        )
+        upsert_activity(
+            conn,
+            ActivityRecord(
+                source=EvidenceSource.GARMIN, external_id="calendar-run",
+                recorded_on=day, activity_type=ActivityType.RUN,
+                name="Morning run", duration_seconds=1800,
+            ),
+            user_id=settings.owner_id,
+        )
+        add_manual_evidence(
+            conn, recorded_on=day, kind=EvidenceKind.ALCOHOL_UNITS,
+            value=2, user_id=settings.owner_id,
+        )
+
+    week = client.get("/calendar?view=week&on=2026-09-14")
+    assert week.status_code == 200
+    assert "Easy run" in week.text
+    assert "Morning run" in week.text
+    assert "alcohol units" not in week.text
+    optional = client.get("/calendar?view=week&on=2026-09-14&optional=1")
+    assert "alcohol units" in optional.text
+    month = client.get("/calendar?view=month&on=2026-09-14")
+    assert "September 2026" in month.text
+    assert "Easy run" in month.text
+
+
+def test_calendar_manual_entry_returns_to_selected_date(client, settings):
+    sign_in(client)
+    page = client.get("/calendar?view=month&on=2026-09-15")
+    response = client.post(
+        "/evidence",
+        data={
+            "csrf_token": csrf_from(page), "return_to": "/calendar?view=month&on=2026-09-15&optional=0",
+            "recorded_on": "2026-09-15", "kind": "alcohol_units", "value": "2", "note": "",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/calendar?view=month&on=2026-09-15&optional=1&notice=added"
+    assert "alcohol units" in client.get(response.headers["location"]).text
+
+
 def test_weekly_read_is_private_and_shows_completed_week_evidence(client, settings):
     assert client.get("/week", follow_redirects=False).status_code == 303
     sign_in(client)

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+from calendar import monthrange
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import parse_qs, quote, urlsplit
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import RedirectResponse
@@ -46,6 +47,7 @@ from outset_ready.plans import (
     build_plan_week,
     create_manual_session,
     fetch_planned_session,
+    list_planned_sessions,
     match_planned_session,
     restore_planned_session,
     skip_planned_session,
@@ -81,6 +83,9 @@ from outset_ready.storage import (
     init_db,
     list_goals_as_of,
     list_connector_syncs,
+    list_activities_between,
+    list_daily_observations_between,
+    list_evidence_between,
     list_goals,
     list_recent_activities,
     list_recent_evidence,
@@ -508,6 +513,92 @@ def create_app(
             "activity-unmatched": "Activity match removed.",
         }
         return render_current_week(request, notice=notices.get(notice or ""))
+
+    @app.get("/calendar")
+    def calendar_page(
+        request: Request,
+        on: str | None = None,
+        view: str = "week",
+        optional: bool = False,
+        notice: str | None = None,
+    ):
+        user_id = _require_owner(request, settings)
+        if view not in {"week", "month"}:
+            raise HTTPException(status_code=400, detail="Unknown calendar view.")
+        try:
+            selected = date.fromisoformat(on) if on else date.today()
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid calendar date.") from exc
+        if view == "week":
+            start = selected - timedelta(days=selected.weekday())
+            end = start + timedelta(days=6)
+            previous = selected - timedelta(days=7)
+            following = selected + timedelta(days=7)
+            heading = f"{start:%d %b} – {end:%d %b %Y}"
+        else:
+            first = selected.replace(day=1)
+            last = first.replace(day=monthrange(first.year, first.month)[1])
+            start = first - timedelta(days=first.weekday())
+            end = last + timedelta(days=6 - last.weekday())
+            previous = first - timedelta(days=1)
+            following = last + timedelta(days=1)
+            heading = f"{selected:%B %Y}"
+
+        with connect(settings.database_target) as conn:
+            sessions = list_planned_sessions(
+                conn, start_date=start, end_date=end, include_removed=True,
+                user_id=user_id,
+            )
+            activities = list_activities_between(
+                conn, start_date=start, end_date=end, user_id=user_id,
+            )
+            evidence = list_evidence_between(
+                conn, start_date=start, end_date=end, user_id=user_id,
+            )
+            observations = list_daily_observations_between(
+                conn, start_date=start, end_date=end, user_id=user_id,
+            )
+        days = []
+        for offset in range((end - start).days + 1):
+            day = start + timedelta(days=offset)
+            days.append({
+                "date": day,
+                "sessions": [item for item in sessions if item.scheduled_on == day],
+                "activities": [item for item in activities if item.recorded_on == day],
+                "evidence": [item for item in evidence if item.recorded_on == day
+                             and (optional or item.kind not in OPTIONAL_CONTEXT_KINDS)],
+                "observations": [item for item in observations if item.recorded_on == day],
+                "in_month": view == "week" or day.month == selected.month,
+            })
+        selected_day = next(item for item in days if item["date"] == selected)
+        def calendar_url(day: date, *, show_optional: bool = optional, mode: str = view) -> str:
+            return f"/calendar?view={mode}&on={day.isoformat()}&optional={int(show_optional)}"
+
+        return templates.TemplateResponse(
+            request=request,
+            name="calendar.html",
+            context={
+                "days": days,
+                "selected_day": selected_day,
+                "heading": heading,
+                "view": view,
+                "optional": optional,
+                "previous_url": calendar_url(previous),
+                "next_url": calendar_url(following),
+                "week_url": calendar_url(selected, mode="week"),
+                "month_url": calendar_url(selected, mode="month"),
+                "optional_url": calendar_url(selected, show_optional=not optional),
+                "return_to": calendar_url(selected),
+                "evidence_options": EVIDENCE_OPTIONS,
+                "optional_options": OPTIONAL_OPTIONS,
+                "owner_email": settings.owner_email,
+                "csrf_token": _session_csrf_token(request),
+                "persistent_storage": settings.persistent_storage,
+                "current_week_start": current_training_week(date.today())[0],
+                "current_week_end": current_training_week(date.today())[1],
+                "notice": "Evidence added." if notice == "added" else None,
+            },
+        )
 
     @app.post("/week/current/garmin")
     def refresh_current_week_garmin(
@@ -943,6 +1034,7 @@ def create_app(
         kind: str = Form(...),
         value: str = Form(""),
         note: str = Form(""),
+        return_to: str = Form(""),
         csrf_token: str = Form(...),
     ):
         user_id = _require_owner(request, settings)
@@ -967,7 +1059,20 @@ def create_app(
                     period_end=period_start + timedelta(days=6),
                     user_id=user_id,
                 )
-        return RedirectResponse(url="/", status_code=status.HTTP_303_SEE_OTHER)
+        destination = "/"
+        if urlsplit(return_to).path == "/calendar" and not return_to.startswith("//"):
+            query = parse_qs(urlsplit(return_to).query)
+            mode = query.get("view", ["week"])[0]
+            mode = mode if mode in {"week", "month"} else "week"
+            show_optional = (
+                kind in {item.value for item in OPTIONAL_CONTEXT_KINDS}
+                or query.get("optional", ["0"])[0] == "1"
+            )
+            destination = (
+                f"/calendar?view={mode}&on={evidence_date.isoformat()}"
+                f"&optional={int(show_optional)}&notice=added"
+            )
+        return RedirectResponse(url=destination, status_code=status.HTTP_303_SEE_OTHER)
 
     def render_connections(
         request: Request,

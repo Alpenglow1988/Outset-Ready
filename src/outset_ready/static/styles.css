@@ -72,6 +72,31 @@ nav { margin-top: 56px; display: grid; gap: 8px; }
 
 .nav-link.active { border-left-color: white; background: rgb(255 255 255 / 7%); color: white; }
 .nav-link.disabled { opacity: .55; }
+
+.calendar-toolbar, .calendar-pager, .calendar-switch { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.calendar-toolbar { justify-content: space-between; margin: 22px 0; }
+.calendar-pager strong { min-width: 190px; text-align: center; }
+.calendar-toolbar .quiet-button { text-decoration: none; }
+.calendar-active { color: var(--ink); text-decoration: underline !important; text-underline-offset: 4px; }
+.calendar-legend { color: var(--muted); font-size: 12px; }
+.calendar-notice { padding: 12px; border: 1px solid var(--line); }
+.calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.calendar-weekday { padding: 10px; font-size: 11px; text-align: center; font-weight: 700; }
+.calendar-cell { display: flex; flex-direction: column; gap: 7px; min-height: 92px; padding: 10px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); color: var(--ink); text-decoration: none; font-size: 11px; }
+.calendar-cell:hover, .calendar-cell:focus-visible { background: rgb(0 0 0 / 5%); }
+.calendar-selected { box-shadow: inset 0 0 0 2px var(--ink); }
+.calendar-outside { color: var(--muted); background: rgb(0 0 0 / 3%); }
+.calendar-count { overflow-wrap: anywhere; color: var(--muted); }
+.calendar-count.completed { color: #22664b; }
+.calendar-detail { display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px; margin-top: 24px; }
+.calendar-detail h3 { margin: 20px 0 8px; font-size: 14px; }
+.calendar-items { margin: 0; padding-left: 18px; line-height: 1.8; }
+.calendar-items span { color: var(--muted); font-size: 11px; }
+@media (max-width: 850px) {
+  .calendar-detail { grid-template-columns: 1fr; }
+  .calendar-cell { min-height: 70px; padding: 5px; }
+  .calendar-weekday { padding: 5px 0; }
+}
 .sidebar-footer { margin-top: auto; }
 .sidebar-note { color: rgb(255 255 255 / 55%); font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .logout-form { display: block; margin: 16px 0 0; }
