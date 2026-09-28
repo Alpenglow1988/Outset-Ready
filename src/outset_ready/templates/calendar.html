@@ -46,6 +46,7 @@
             <a class="quiet-button" href="{{ previous_url }}" aria-label="Previous {{ view }}">Previous</a>
             <strong>{{ heading }}</strong>
             <a class="quiet-button" href="{{ next_url }}" aria-label="Next {{ view }}">Next</a>
+            <a class="quiet-button calendar-today" href="{{ today_url }}" aria-label="Go to today">Today</a>
           </div>
           <div class="calendar-switch">
             <a class="quiet-button {% if view == 'week' %}calendar-active{% endif %}" href="{{ week_url }}" {% if view == 'week' %}aria-current="page"{% endif %}>Week</a>

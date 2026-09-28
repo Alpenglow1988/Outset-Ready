@@ -77,6 +77,8 @@ nav { margin-top: 56px; display: grid; gap: 8px; }
 .calendar-toolbar { justify-content: space-between; margin: 22px 0; }
 .calendar-pager strong { min-width: 190px; text-align: center; }
 .calendar-toolbar .quiet-button { text-decoration: none; }
+.calendar-pager .calendar-today { padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; }
+.calendar-pager .calendar-today:hover { border-color: var(--ink); color: var(--ink); }
 .calendar-active { color: var(--ink); text-decoration: underline !important; text-underline-offset: 4px; }
 .calendar-legend { color: var(--muted); font-size: 12px; }
 .calendar-fetch, .calendar-week-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
