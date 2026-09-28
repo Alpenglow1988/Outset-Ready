@@ -519,7 +519,6 @@ def create_app(
         request: Request,
         on: str | None = None,
         view: str = "week",
-        optional: bool = False,
         notice: str | None = None,
     ):
         user_id = _require_owner(request, settings)
@@ -568,7 +567,6 @@ def create_app(
             day_observations = [item for item in observations if item.recorded_on == day]
             day_evidence = [
                 item for item in evidence if item.recorded_on == day
-                and (optional or item.kind not in OPTIONAL_CONTEXT_KINDS)
             ]
             def day_total(kind: EvidenceKind) -> float | None:
                 values = [item.value for item in day_evidence if item.kind is kind]
@@ -618,8 +616,8 @@ def create_app(
                 "in_month": view == "week" or day.month == selected.month,
             })
         selected_day = next(item for item in days if item["date"] == selected)
-        def calendar_url(day: date, *, show_optional: bool = optional, mode: str = view) -> str:
-            return f"/calendar?view={mode}&on={day.isoformat()}&optional={int(show_optional)}"
+        def calendar_url(day: date, *, mode: str = view) -> str:
+            return f"/calendar?view={mode}&on={day.isoformat()}"
 
         return templates.TemplateResponse(
             request=request,
@@ -629,13 +627,11 @@ def create_app(
                 "selected_day": selected_day,
                 "heading": heading,
                 "view": view,
-                "optional": optional,
                 "previous_url": calendar_url(previous),
                 "next_url": calendar_url(following),
                 "today_url": calendar_url(date.today()),
                 "week_url": calendar_url(selected, mode="week"),
                 "month_url": calendar_url(selected, mode="month"),
-                "optional_url": calendar_url(selected, show_optional=not optional),
                 "return_to": calendar_url(selected),
                 "evidence_options": EVIDENCE_OPTIONS,
                 "optional_options": OPTIONAL_OPTIONS,
@@ -664,7 +660,6 @@ def create_app(
         week_start: str = Form(...),
         on: str = Form(...),
         view: str = Form("week"),
-        optional: bool = Form(False),
         source: str = Form("garmin"),
         csrf_token: str = Form(...),
     ):
@@ -718,8 +713,7 @@ def create_app(
         except GarminConnectorError:
             notice = "fetch-failed"
         return RedirectResponse(
-            url=(f"/calendar?view={view}&on={selected.isoformat()}"
-                 f"&optional={int(optional)}&notice={notice}"),
+            url=f"/calendar?view={view}&on={selected.isoformat()}&notice={notice}",
             status_code=status.HTTP_303_SEE_OTHER,
         )
 
@@ -1187,13 +1181,9 @@ def create_app(
             query = parse_qs(urlsplit(return_to).query)
             mode = query.get("view", ["week"])[0]
             mode = mode if mode in {"week", "month"} else "week"
-            show_optional = (
-                kind in {item.value for item in OPTIONAL_CONTEXT_KINDS}
-                or query.get("optional", ["0"])[0] == "1"
-            )
             destination = (
                 f"/calendar?view={mode}&on={evidence_date.isoformat()}"
-                f"&optional={int(show_optional)}&notice=added"
+                "&notice=added"
             )
         return RedirectResponse(url=destination, status_code=status.HTTP_303_SEE_OTHER)
 
