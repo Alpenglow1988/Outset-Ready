@@ -512,11 +512,17 @@ def test_changed_evidence_reopens_a_finalised_week_as_a_visible_revision(setting
         assert "Travel changed the available training time." in revised_page.text
         assert "Revision 1" in revised_page.text
         week_list = revised_page.text.split('<ol class="weekly-review-history">', 1)[1].split('</ol>', 1)[0]
-        week_label = f'{first.period_start:%d %b} to {first.period_end:%d %b %Y}'
+        week_label = (
+            f'{first.period_start:%d}–{first.period_end:%d %b %Y}'
+            if first.period_start.month == first.period_end.month
+            else f'{first.period_start:%d %b} – {first.period_end:%d %b %Y}'
+        )
         assert week_list.count(week_label) == 1
+        assert week_list.count('class="week-history-item is-current"') == 1
+        assert "Review available" in week_list
         assert week_list.count(f'href="/week?review_id={reviews[0].id}"') == 1
-        assert f'href="/week?review_id={first.id}"' not in week_list
-        assert f'href="/week?review_id={first.id}"' in revised_page.text
+        assert f'href="/week?review_id={first.id}"' in week_list
+        assert "Earlier versions (1)" in week_list
         older_page = review_client.get(f"/week?review_id={first.id}")
         older_week_list = older_page.text.split('<ol class="weekly-review-history">', 1)[1].split('</ol>', 1)[0]
         assert older_week_list.count(week_label) == 1
