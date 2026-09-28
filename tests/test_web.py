@@ -227,6 +227,12 @@ def test_calendar_shows_fetch_actions_for_each_week_with_saved_connection(client
     month = client.get("/calendar?view=month&on=2026-09-14")
     assert month.text.count('action="/calendar/fetch-week"') == 5
     assert 'name="week_start" value="2026-08-31"' in month.text
+    first_week = month.text.index("Week 31 Aug 2026 – 06 Sep 2026")
+    second_week = month.text.index("Week 07 Sep 2026 – 13 Sep 2026")
+    first_day = month.text.index('on=2026-08-31&amp;optional=0', first_week)
+    second_week_first_day = month.text.index('on=2026-09-07&amp;optional=0', second_week)
+    assert first_week < first_day < second_week < second_week_first_day
+    assert month.text.count("Fetch this week from Garmin") == 5
 
 
 def test_calendar_fetches_only_elapsed_days_in_current_week(client, monkeypatch):
