@@ -51,7 +51,6 @@
           <div class="calendar-switch">
             <a class="quiet-button {% if view == 'week' %}calendar-active{% endif %}" href="{{ week_url }}" {% if view == 'week' %}aria-current="page"{% endif %}>Week</a>
             <a class="quiet-button {% if view == 'month' %}calendar-active{% endif %}" href="{{ month_url }}" {% if view == 'month' %}aria-current="page"{% endif %}>Month</a>
-            <a class="quiet-button" href="{{ optional_url }}">{{ 'Hide' if optional else 'Show' }} optional context</a>
           </div>
         </div>
         {% if garmin_connection and garmin_connection.status.value != 'reconnect_required' %}
@@ -62,7 +61,6 @@
               <input type="hidden" name="week_start" value="{{ selected_day.week_start.isoformat() }}">
               <input type="hidden" name="on" value="{{ selected_day.date.isoformat() }}">
               <input type="hidden" name="view" value="week">
-              <input type="hidden" name="optional" value="{{ optional | int }}">
               <button class="primary-button" type="submit" data-pending-label="Fetching Garmin">Fetch week from Garmin</button>
               <span>{{ 'Planned workouts' if selected_day.week_start > today else 'Activities and health evidence through today' }}</span>
             </form>
@@ -90,7 +88,6 @@
                     <input type="hidden" name="week_start" value="{{ day.week_start.isoformat() }}">
                     <input type="hidden" name="on" value="{{ selected_day.date.isoformat() }}">
                     <input type="hidden" name="view" value="month">
-                    <input type="hidden" name="optional" value="{{ optional | int }}">
                     <button class="quiet-button" type="submit" data-pending-label="Fetching Garmin">Fetch this week from Garmin</button>
                   </form>
                 {% elif garmin_connection and garmin_connection.status.value == 'reconnect_required' %}
@@ -99,7 +96,7 @@
               </div>
             {% endif %}
             <a class="calendar-cell {% if day.date == selected_day.date %}calendar-selected{% endif %} {% if not day.in_month %}calendar-outside{% endif %}"
-               href="/calendar?view={{ view }}&amp;on={{ day.date.isoformat() }}&amp;optional={{ optional | int }}"
+               href="/calendar?view={{ view }}&amp;on={{ day.date.isoformat() }}"
                {% if day.date == selected_day.date %}aria-current="date"{% endif %}>
               <strong>{{ day.date.day }}</strong>
               {% if day.sessions %}<span class="calendar-count">{{ day.sessions | length }} planned</span>{% endif %}

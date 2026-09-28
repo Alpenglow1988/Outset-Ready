@@ -167,21 +167,20 @@ def test_calendar_is_private_and_displays_dated_plan_activity_and_evidence(clien
     assert week.status_code == 200
     assert "Easy run" in week.text
     assert "Morning run" in week.text
-    assert "alcohol units" not in week.text
-    optional = client.get("/calendar?view=week&on=2026-09-14&optional=1")
-    assert "alcohol units" in optional.text
+    assert "alcohol units" in week.text
+    assert "Show optional context" not in week.text
     month = client.get("/calendar?view=month&on=2026-09-14")
     assert "September 2026" in month.text
     assert "Easy run" in month.text
 
 
-def test_calendar_today_control_preserves_view_and_optional_context(client):
+def test_calendar_today_control_preserves_view(client):
     sign_in(client)
     for view in ("month", "week"):
-        page = client.get(f"/calendar?view={view}&on=2026-09-01&optional=1")
+        page = client.get(f"/calendar?view={view}&on=2026-09-01")
         assert (
-            f'href="/calendar?view={view}&amp;on={date.today().isoformat()}'
-            '&amp;optional=1" aria-label="Go to today" data-calendar-today'
+            f'href="/calendar?view={view}&amp;on={date.today().isoformat()}"'
+            ' aria-label="Go to today" data-calendar-today'
         ) in page.text
 
 
@@ -191,17 +190,17 @@ def test_calendar_manual_entry_returns_to_selected_date(client, settings):
     response = client.post(
         "/evidence",
         data={
-            "csrf_token": csrf_from(page), "return_to": "/calendar?view=month&on=2026-09-15&optional=0",
+            "csrf_token": csrf_from(page), "return_to": "/calendar?view=month&on=2026-09-15",
             "recorded_on": "2026-09-15", "kind": "alcohol_units", "value": "2", "note": "",
         },
         follow_redirects=False,
     )
     assert response.status_code == 303
-    assert response.headers["location"] == "/calendar?view=month&on=2026-09-15&optional=1&notice=added"
+    assert response.headers["location"] == "/calendar?view=month&on=2026-09-15&notice=added"
     assert "alcohol units" in client.get(response.headers["location"]).text
 
 
-def test_calendar_shows_dated_alcohol_indicators_only_with_optional_context(client, settings):
+def test_calendar_shows_dated_alcohol_indicators_by_default(client, settings):
     sign_in(client)
     with connect(settings.database_target) as conn:
         for day, units in ((15, 2), (15, 3), (17, 0), (18, 1)):
@@ -210,14 +209,12 @@ def test_calendar_shows_dated_alcohol_indicators_only_with_optional_context(clie
                 kind=EvidenceKind.ALCOHOL_UNITS, value=units, user_id="owner",
             )
 
-    hidden = client.get("/calendar?view=month&on=2026-09-14")
-    assert 'class="calendar-indicator alcohol"' not in hidden.text
-    month = client.get("/calendar?view=month&on=2026-09-14&optional=1")
+    month = client.get("/calendar?view=month&on=2026-09-14")
     assert month.text.count('class="calendar-indicator alcohol"') == 3
     assert "Alcohol 5 units" in month.text
     assert "Alcohol 0 units" in month.text
     assert "Alcohol 1 unit" in month.text
-    week = client.get("/calendar?view=week&on=2026-09-14&optional=1")
+    week = client.get("/calendar?view=week&on=2026-09-14")
     assert week.text.count('class="calendar-indicator alcohol"') == 3
 
 
@@ -252,11 +249,9 @@ def test_calendar_distinguishes_sport_weight_and_food_indicators(client, setting
                 conn, recorded_on=day, kind=kind, value=value, user_id="owner",
             )
 
-    hidden = client.get("/calendar?view=month&on=2026-09-14")
-    assert "Run ×2" in hidden.text and "Swim" in hidden.text
-    assert "Weight 89.5 kg" in hidden.text and "Weight 88.8 kg" in hidden.text
-    assert 'class="calendar-indicator food"' not in hidden.text
-    shown = client.get("/calendar?view=month&on=2026-09-14&optional=1")
+    shown = client.get("/calendar?view=month&on=2026-09-14")
+    assert "Run ×2" in shown.text and "Swim" in shown.text
+    assert "Weight 89.5 kg" in shown.text and "Weight 88.8 kg" in shown.text
     assert "Food 1100 kcal · 40 g protein" in shown.text
     assert shown.text.count('class="calendar-indicator sport"') == 2
     assert shown.text.count('class="calendar-indicator weight"') == 2
@@ -272,19 +267,19 @@ def test_calendar_fetches_a_past_week_and_preserves_month(client, monkeypatch):
         return SimpleNamespace(warnings=())
 
     monkeypatch.setattr("outset_ready.web.sync_hosted_garmin", fetch)
-    page = client.get("/calendar?view=month&on=2025-01-10&optional=1")
+    page = client.get("/calendar?view=month&on=2025-01-10")
     response = client.post(
         "/calendar/fetch-week",
         data={
             "csrf_token": csrf_from(page), "source": "garmin", "week_start": "2024-12-30",
-            "on": "2025-01-10", "view": "month", "optional": "1",
+            "on": "2025-01-10", "view": "month",
         },
         follow_redirects=False,
     )
     assert response.status_code == 303
     assert calls == [("owner", 7, date(2025, 1, 5), True)]
     assert response.headers["location"] == (
-        "/calendar?view=month&on=2025-01-10&optional=1&notice=fetched"
+        "/calendar?view=month&on=2025-01-10&notice=fetched"
     )
 
 
@@ -302,8 +297,8 @@ def test_calendar_shows_fetch_actions_for_each_week_with_saved_connection(client
     assert 'name="week_start" value="2026-08-31"' in month.text
     first_week = month.text.index("Week 31 Aug 2026 – 06 Sep 2026")
     second_week = month.text.index("Week 07 Sep 2026 – 13 Sep 2026")
-    first_day = month.text.index('on=2026-08-31&amp;optional=0', first_week)
-    second_week_first_day = month.text.index('on=2026-09-07&amp;optional=0', second_week)
+    first_day = month.text.index('on=2026-08-31"', first_week)
+    second_week_first_day = month.text.index('on=2026-09-07"', second_week)
     assert first_week < first_day < second_week < second_week_first_day
     assert month.text.count("Fetch this week from Garmin") == 5
 
