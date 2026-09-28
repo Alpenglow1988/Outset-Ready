@@ -564,25 +564,57 @@ def create_app(
         days = []
         for offset in range((end - start).days + 1):
             day = start + timedelta(days=offset)
+            day_activities = [item for item in activities if item.recorded_on == day]
+            day_observations = [item for item in observations if item.recorded_on == day]
             day_evidence = [
                 item for item in evidence if item.recorded_on == day
                 and (optional or item.kind not in OPTIONAL_CONTEXT_KINDS)
             ]
-            alcohol_entries = [
+            def day_total(kind: EvidenceKind) -> float | None:
+                values = [item.value for item in day_evidence if item.kind is kind]
+                return sum(values) if values else None
+
+            manual_weight = next((
                 item.value for item in day_evidence
-                if item.kind is EvidenceKind.ALCOHOL_UNITS
-            ]
+                if item.kind is EvidenceKind.WEIGHT_KG
+                and item.source is EvidenceSource.MANUAL
+            ), None)
+            recorded_weight = next((
+                item.value for item in day_evidence
+                if item.kind is EvidenceKind.WEIGHT_KG
+            ), None)
+            observed_weight = next((
+                item.weight_kg for item in day_observations
+                if item.weight_kg is not None
+            ), None)
+            sport_counts = {}
+            for activity in day_activities:
+                sport_counts[activity.activity_type] = (
+                    sport_counts.get(activity.activity_type, 0) + 1
+                )
             days.append({
                 "date": day,
                 "week_start": day - timedelta(days=day.weekday()),
                 "sessions": [item for item in sessions if item.scheduled_on == day],
-                "activities": [item for item in activities if item.recorded_on == day],
+                "activities": day_activities,
+                "sports": [
+                    {"name": kind.value.replace("_", " ").title(), "count": count}
+                    for kind, count in sport_counts.items()
+                ],
                 "evidence": day_evidence,
-                "alcohol_units": sum(alcohol_entries) if alcohol_entries else None,
-                "has_other_evidence": any(
-                    item.kind is not EvidenceKind.ALCOHOL_UNITS for item in day_evidence
+                "weight_kg": manual_weight if manual_weight is not None else (
+                    recorded_weight if recorded_weight is not None else observed_weight
                 ),
-                "observations": [item for item in observations if item.recorded_on == day],
+                "calories": day_total(EvidenceKind.CALORIES),
+                "protein_g": day_total(EvidenceKind.PROTEIN_G),
+                "alcohol_units": day_total(EvidenceKind.ALCOHOL_UNITS),
+                "has_other_evidence": any(
+                    item.kind not in {
+                        EvidenceKind.ALCOHOL_UNITS, EvidenceKind.WEIGHT_KG,
+                        EvidenceKind.CALORIES, EvidenceKind.PROTEIN_G,
+                    } for item in day_evidence
+                ),
+                "observations": day_observations,
                 "in_month": view == "week" or day.month == selected.month,
             })
         selected_day = next(item for item in days if item["date"] == selected)
