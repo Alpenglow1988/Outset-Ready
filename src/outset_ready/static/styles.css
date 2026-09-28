@@ -358,8 +358,10 @@ textarea { resize: vertical; }
 .weekly-review-history li.is-current { border-color: var(--ink); }
 .weekly-review-history a { display: grid; grid-template-columns: 1fr auto; gap: 7px 16px; padding: 16px 18px; color: var(--ink); text-decoration: none; }
 .weekly-review-history span { font-family: "Iowan Old Style", "Palatino Linotype", serif; font-size: 17px; }
-.weekly-review-history strong { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 .weekly-review-history small { grid-column: 1 / -1; color: var(--muted); font-size: 10px; text-transform: capitalize; }
+.review-revisions { margin-top: 18px; font-size: 12px; }
+.review-revisions summary { cursor: pointer; color: var(--ink); font-weight: 700; }
+.review-revisions ol { margin: 12px 0 0; padding-left: 20px; line-height: 1.8; }
 .metric-section { margin-top: 58px; }
 .metric-grid {
   display: grid;
