@@ -103,7 +103,13 @@
               <strong>{{ day.date.day }}</strong>
               {% if day.sessions %}<span class="calendar-count">{{ day.sessions | length }} planned</span>{% endif %}
               {% if day.activities %}<span class="calendar-count completed">{{ day.activities | length }} completed</span>{% endif %}
-              {% if day.evidence or day.observations %}<span class="calendar-count evidence">Evidence</span>{% endif %}
+              {% if day.has_other_evidence or day.observations %}<span class="calendar-count evidence">Evidence</span>{% endif %}
+              {% if day.alcohol_units is not none %}
+                <span class="calendar-indicator">
+                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><path d="M5 2h10l-1 6a4 4 0 0 1-8 0L5 2Zm5 10v6m-4 0h8"/></svg>
+                  Alcohol {{ '%g' | format(day.alcohol_units) }} unit{{ '' if day.alcohol_units == 1 else 's' }}
+                </span>
+              {% endif %}
             </a>
           {% endfor %}
         </div>

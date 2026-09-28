@@ -96,6 +96,8 @@ nav { margin-top: 56px; display: grid; gap: 8px; }
 .calendar-outside { color: var(--muted); background: rgb(0 0 0 / 3%); }
 .calendar-count { overflow-wrap: anywhere; color: var(--muted); }
 .calendar-count.completed { color: #22664b; }
+.calendar-indicator { display: inline-flex; align-items: center; gap: 5px; align-self: flex-start; max-width: 100%; padding: 4px 7px; border: 1px solid var(--line); border-radius: 999px; color: var(--ink); background: white; font-size: 11px; overflow-wrap: anywhere; }
+.calendar-indicator svg { width: 13px; height: 13px; flex: none; }
 .calendar-detail { display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px; margin-top: 24px; }
 .calendar-detail h3 { margin: 20px 0 8px; font-size: 14px; }
 .calendar-items { margin: 0; padding-left: 18px; line-height: 1.8; }
