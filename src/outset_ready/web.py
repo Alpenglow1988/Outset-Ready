@@ -564,13 +564,24 @@ def create_app(
         days = []
         for offset in range((end - start).days + 1):
             day = start + timedelta(days=offset)
+            day_evidence = [
+                item for item in evidence if item.recorded_on == day
+                and (optional or item.kind not in OPTIONAL_CONTEXT_KINDS)
+            ]
+            alcohol_entries = [
+                item.value for item in day_evidence
+                if item.kind is EvidenceKind.ALCOHOL_UNITS
+            ]
             days.append({
                 "date": day,
                 "week_start": day - timedelta(days=day.weekday()),
                 "sessions": [item for item in sessions if item.scheduled_on == day],
                 "activities": [item for item in activities if item.recorded_on == day],
-                "evidence": [item for item in evidence if item.recorded_on == day
-                             and (optional or item.kind not in OPTIONAL_CONTEXT_KINDS)],
+                "evidence": day_evidence,
+                "alcohol_units": sum(alcohol_entries) if alcohol_entries else None,
+                "has_other_evidence": any(
+                    item.kind is not EvidenceKind.ALCOHOL_UNITS for item in day_evidence
+                ),
                 "observations": [item for item in observations if item.recorded_on == day],
                 "in_month": view == "week" or day.month == selected.month,
             })

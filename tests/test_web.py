@@ -191,6 +191,26 @@ def test_calendar_manual_entry_returns_to_selected_date(client, settings):
     assert "alcohol units" in client.get(response.headers["location"]).text
 
 
+def test_calendar_shows_dated_alcohol_indicators_only_with_optional_context(client, settings):
+    sign_in(client)
+    with connect(settings.database_target) as conn:
+        for day, units in ((15, 2), (15, 3), (17, 0), (18, 1)):
+            add_manual_evidence(
+                conn, recorded_on=date(2026, 9, day),
+                kind=EvidenceKind.ALCOHOL_UNITS, value=units, user_id="owner",
+            )
+
+    hidden = client.get("/calendar?view=month&on=2026-09-14")
+    assert 'class="calendar-indicator"' not in hidden.text
+    month = client.get("/calendar?view=month&on=2026-09-14&optional=1")
+    assert month.text.count('class="calendar-indicator"') == 3
+    assert "Alcohol 5 units" in month.text
+    assert "Alcohol 0 units" in month.text
+    assert "Alcohol 1 unit" in month.text
+    week = client.get("/calendar?view=week&on=2026-09-14&optional=1")
+    assert week.text.count('class="calendar-indicator"') == 3
+
+
 def test_calendar_fetches_a_past_week_and_preserves_month(client, monkeypatch):
     sign_in(client)
     calls = []
