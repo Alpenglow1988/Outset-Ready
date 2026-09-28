@@ -66,8 +66,10 @@
               <span>{{ 'Planned workouts' if selected_day.week_start > today else 'Activities and health evidence through today' }}</span>
             </form>
           {% endif %}
+        {% elif garmin_connection and garmin_connection.status.value == 'reconnect_required' %}
+          <p class="calendar-notice" role="status">Garmin needs a new connection before you can fetch another week. <a class="text-link" href="/connections">Reconnect Garmin</a>.</p>
         {% else %}
-          <p><a class="text-link" href="/connections">Connect or reconnect Garmin</a> to fetch a week.</p>
+          <p><a class="text-link" href="/connections">Connect Garmin</a> to fetch a week.</p>
         {% endif %}
         {% if notice %}<p class="calendar-notice" role="status">{{ notice }}</p>{% endif %}
         <p class="calendar-legend">Planned sessions · Completed activities · Measurements and context. An empty date means Ready has no entry for it.</p>
@@ -90,6 +92,8 @@
                     <input type="hidden" name="optional" value="{{ optional | int }}">
                     <button class="quiet-button" type="submit" data-pending-label="Fetching Garmin">Fetch this week from Garmin</button>
                   </form>
+                {% elif garmin_connection and garmin_connection.status.value == 'reconnect_required' %}
+                  <a class="quiet-button calendar-week-reconnect" href="/connections">Reconnect Garmin to fetch</a>
                 {% endif %}
               </div>
             {% endif %}

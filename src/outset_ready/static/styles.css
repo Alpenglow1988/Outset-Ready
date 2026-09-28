@@ -84,8 +84,9 @@ nav { margin-top: 56px; display: grid; gap: 8px; }
 .calendar-week-actions { grid-column: 1 / -1; margin: 0; padding: 7px 12px; border-top: 1px solid var(--line); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgb(0 0 0 / 3%); }
 .calendar-week-actions strong { font-size: 12px; }
 .calendar-week-actions form { margin: 0 0 0 auto; }
-.calendar-week-actions button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: white; cursor: pointer; }
-.calendar-week-actions button:hover { border-color: var(--ink); color: var(--ink); }
+.calendar-week-actions button, .calendar-week-reconnect { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: white; cursor: pointer; }
+.calendar-week-actions button:hover, .calendar-week-reconnect:hover { border-color: var(--ink); color: var(--ink); }
+.calendar-week-reconnect { margin-left: auto; text-decoration: none; }
 .calendar-notice { padding: 12px; border: 1px solid var(--line); }
 .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
 .calendar-weekday { padding: 10px; font-size: 11px; text-align: center; font-weight: 700; }
