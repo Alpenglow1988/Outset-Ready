@@ -511,6 +511,16 @@ def test_changed_evidence_reopens_a_finalised_week_as_a_visible_revision(setting
         assert "Revision 2" in revised_page.text
         assert "Travel changed the available training time." in revised_page.text
         assert "Revision 1" in revised_page.text
+        week_list = revised_page.text.split('<ol class="weekly-review-history">', 1)[1].split('</ol>', 1)[0]
+        week_label = f'{first.period_start:%d %b} to {first.period_end:%d %b %Y}'
+        assert week_list.count(week_label) == 1
+        assert week_list.count(f'href="/week?review_id={reviews[0].id}"') == 1
+        assert f'href="/week?review_id={first.id}"' not in week_list
+        assert f'href="/week?review_id={first.id}"' in revised_page.text
+        older_page = review_client.get(f"/week?review_id={first.id}")
+        older_week_list = older_page.text.split('<ol class="weekly-review-history">', 1)[1].split('</ol>', 1)[0]
+        assert older_week_list.count(week_label) == 1
+        assert f'href="/week?review_id={reviews[0].id}"' in older_week_list
 
 
 def test_confirmation_stops_when_evidence_changed_after_page_load(settings):
