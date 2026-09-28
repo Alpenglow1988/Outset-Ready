@@ -76,17 +76,9 @@
             <span class="calendar-weekday">{{ label }}</span>
           {% endfor %}
           {% for day in days %}
-            <a class="calendar-cell {% if day.date == selected_day.date %}calendar-selected{% endif %} {% if not day.in_month %}calendar-outside{% endif %}"
-               href="/calendar?view={{ view }}&amp;on={{ day.date.isoformat() }}&amp;optional={{ optional | int }}"
-               {% if day.date == selected_day.date %}aria-current="date"{% endif %}>
-              <strong>{{ day.date.day }}</strong>
-              {% if day.sessions %}<span class="calendar-count">{{ day.sessions | length }} planned</span>{% endif %}
-              {% if day.activities %}<span class="calendar-count completed">{{ day.activities | length }} completed</span>{% endif %}
-              {% if day.evidence or day.observations %}<span class="calendar-count evidence">Evidence</span>{% endif %}
-            </a>
-            {% if view == 'month' and loop.index is divisibleby 7 %}
+            {% if view == 'month' and loop.index0 is divisibleby 7 %}
               <div class="calendar-week-actions">
-                <span>Week of {{ day.week_start.strftime('%d %b') }}</span>
+                <strong>Week {{ day.week_start.strftime('%d %b %Y') }} – {{ days[loop.index0 + 6].date.strftime('%d %b %Y') }}</strong>
                 <span>{{ 'Planned workouts' if day.week_start > today else 'Activities and health evidence' }}</span>
                 {% if garmin_connection and garmin_connection.status.value != 'reconnect_required' %}
                   <form method="post" action="/calendar/fetch-week" data-pending>
@@ -96,11 +88,19 @@
                     <input type="hidden" name="on" value="{{ selected_day.date.isoformat() }}">
                     <input type="hidden" name="view" value="month">
                     <input type="hidden" name="optional" value="{{ optional | int }}">
-                    <button class="quiet-button" type="submit" data-pending-label="Fetching Garmin">Fetch week from Garmin</button>
+                    <button class="quiet-button" type="submit" data-pending-label="Fetching Garmin">Fetch this week from Garmin</button>
                   </form>
                 {% endif %}
               </div>
             {% endif %}
+            <a class="calendar-cell {% if day.date == selected_day.date %}calendar-selected{% endif %} {% if not day.in_month %}calendar-outside{% endif %}"
+               href="/calendar?view={{ view }}&amp;on={{ day.date.isoformat() }}&amp;optional={{ optional | int }}"
+               {% if day.date == selected_day.date %}aria-current="date"{% endif %}>
+              <strong>{{ day.date.day }}</strong>
+              {% if day.sessions %}<span class="calendar-count">{{ day.sessions | length }} planned</span>{% endif %}
+              {% if day.activities %}<span class="calendar-count completed">{{ day.activities | length }} completed</span>{% endif %}
+              {% if day.evidence or day.observations %}<span class="calendar-count evidence">Evidence</span>{% endif %}
+            </a>
           {% endfor %}
         </div>
 

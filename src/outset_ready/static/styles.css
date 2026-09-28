@@ -81,7 +81,8 @@ nav { margin-top: 56px; display: grid; gap: 8px; }
 .calendar-legend { color: var(--muted); font-size: 12px; }
 .calendar-fetch, .calendar-week-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 12px 0; }
 .calendar-fetch span, .calendar-week-actions span { color: var(--muted); font-size: 11px; }
-.calendar-week-actions { grid-column: 1 / -1; margin: 0; padding: 7px 12px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgb(0 0 0 / 3%); }
+.calendar-week-actions { grid-column: 1 / -1; margin: 0; padding: 7px 12px; border-top: 1px solid var(--line); border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); background: rgb(0 0 0 / 3%); }
+.calendar-week-actions strong { font-size: 12px; }
 .calendar-week-actions form { margin: 0 0 0 auto; }
 .calendar-week-actions button { cursor: pointer; }
 .calendar-notice { padding: 12px; border: 1px solid var(--line); }
