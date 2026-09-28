@@ -479,6 +479,32 @@ def test_owner_can_finalise_a_rules_based_review_without_ai(settings):
         assert saved.status.value == "finalised"
 
 
+def test_week_navigation_moves_between_latest_reviews_for_adjacent_weeks(settings):
+    first_week_start = last_completed_training_week(date.today())[0] - timedelta(weeks=2)
+    with TestClient(create_app(settings=settings)) as review_client:
+        sign_in(review_client)
+        with connect(settings.database_target) as conn:
+            add_manual_evidence(
+                conn, recorded_on=first_week_start,
+                kind=EvidenceKind.NOTE, note="Earlier training week.",
+            )
+
+        latest_page = review_client.get("/week")
+        with connect(settings.database_target) as conn:
+            reviews = list_weekly_reviews(conn)
+        assert len(reviews) == 3
+        assert f'href="/week?review_id={reviews[1].id}" rel="prev"' in latest_page.text
+        assert '<span aria-disabled="true">Next week →</span>' in latest_page.text
+
+        middle_page = review_client.get(f"/week?review_id={reviews[1].id}")
+        assert f'href="/week?review_id={reviews[2].id}" rel="prev"' in middle_page.text
+        assert f'href="/week?review_id={reviews[0].id}" rel="next"' in middle_page.text
+
+        oldest_page = review_client.get(f"/week?review_id={reviews[2].id}")
+        assert '<span aria-disabled="true">← Previous week</span>' in oldest_page.text
+        assert f'href="/week?review_id={reviews[1].id}" rel="next"' in oldest_page.text
+
+
 def test_changed_evidence_reopens_a_finalised_week_as_a_visible_revision(settings):
     interpreter = FakeReviewInterpreter()
     with TestClient(
