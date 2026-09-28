@@ -69,6 +69,7 @@ def sync_hosted_garmin(
     user_id: str,
     days: int = 7,
     end_date: date | None = None,
+    bounded_activity_range: bool = False,
     client_factory: Callable[[GarminSettings], GarminClient] = GarminClient,
 ) -> GarminSyncStats:
     cipher = CredentialCipher(settings.credential_encryption_key)
@@ -126,6 +127,7 @@ def sync_hosted_garmin(
             owner_email=settings.owner_email,
             user_id=user_id,
             save_raw_payloads=False,
+            bounded_activity_range=bounded_activity_range,
         )
     except GarminAuthenticationRequiredError:
         _require_reconnect(settings, user_id=user_id)

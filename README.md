@@ -150,6 +150,16 @@ when you browse or enter data. Planned and completed work appear separately so
 an unmatched activity is not presented as a completed plan. The current week
 still owns plan edits and matching, while `Weekly read` owns confirmed reviews.
 
+Each visible calendar week has a `Fetch week from Garmin` action when a saved
+Garmin connection is available. Past weeks fetch activities and daily evidence
+for that exact Monday-to-Sunday window; the current week stops at today. Future
+weeks fetch planned workouts, not future health data. Month view keeps the
+selected month in place when you fetch any of its visible weeks. The date-bounded
+activity request avoids paging from Garmin's newest activity to find an old
+week. Garmin failures leave existing entries available, and a partial fetch
+shows a warning. Other connectors can follow this week-scoped workflow when
+Ready supports them; the current action calls Garmin only.
+
 Open `Weekly read` after Sunday. Ready prepares drafts for completed weeks covered
 by the recent evidence history. Check the optional context and plan follow-through,
 then confirm the selected revision. Confirmation locks that evidence snapshot. If

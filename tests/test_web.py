@@ -1,5 +1,6 @@
 import re
 from datetime import date, timedelta
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -187,6 +188,96 @@ def test_calendar_manual_entry_returns_to_selected_date(client, settings):
     assert response.status_code == 303
     assert response.headers["location"] == "/calendar?view=month&on=2026-09-15&optional=1&notice=added"
     assert "alcohol units" in client.get(response.headers["location"]).text
+
+
+def test_calendar_fetches_a_past_week_and_preserves_month(client, monkeypatch):
+    sign_in(client)
+    calls = []
+
+    def fetch(_settings, *, user_id, days, end_date, bounded_activity_range):
+        calls.append((user_id, days, end_date, bounded_activity_range))
+        return SimpleNamespace(warnings=())
+
+    monkeypatch.setattr("outset_ready.web.sync_hosted_garmin", fetch)
+    page = client.get("/calendar?view=month&on=2025-01-10&optional=1")
+    response = client.post(
+        "/calendar/fetch-week",
+        data={
+            "csrf_token": csrf_from(page), "source": "garmin", "week_start": "2024-12-30",
+            "on": "2025-01-10", "view": "month", "optional": "1",
+        },
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert calls == [("owner", 7, date(2025, 1, 5), True)]
+    assert response.headers["location"] == (
+        "/calendar?view=month&on=2025-01-10&optional=1&notice=fetched"
+    )
+
+
+def test_calendar_shows_fetch_actions_for_each_week_with_saved_connection(client, settings):
+    sign_in(client)
+    with connect(settings.database_target) as conn:
+        save_connector_credentials(
+            conn, connector="garmin", encrypted_credentials="test-token",
+            status=ConnectorConnectionStatus.TOKEN_SAVED, user_id="owner",
+        )
+    week = client.get("/calendar?view=week&on=2026-09-14")
+    assert week.text.count('action="/calendar/fetch-week"') == 1
+    month = client.get("/calendar?view=month&on=2026-09-14")
+    assert month.text.count('action="/calendar/fetch-week"') == 5
+    assert 'name="week_start" value="2026-08-31"' in month.text
+
+
+def test_calendar_fetches_only_elapsed_days_in_current_week(client, monkeypatch):
+    sign_in(client)
+    start, _ = current_training_week(date.today())
+    calls = []
+
+    def fetch(_settings, **kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(warnings=("Some data unavailable",))
+
+    monkeypatch.setattr("outset_ready.web.sync_hosted_garmin", fetch)
+    page = client.get("/calendar")
+    response = client.post(
+        "/calendar/fetch-week",
+        data={
+            "csrf_token": csrf_from(page), "week_start": start.isoformat(),
+            "on": date.today().isoformat(), "view": "week",
+        },
+        follow_redirects=False,
+    )
+    assert calls[0]["days"] == (date.today() - start).days + 1
+    assert calls[0]["end_date"] == date.today()
+    assert response.headers["location"].endswith("notice=fetched-with-warnings")
+
+
+def test_calendar_fetches_future_plan_and_rejects_invalid_week(client, monkeypatch):
+    sign_in(client)
+    start = current_training_week(date.today())[0] + timedelta(days=7)
+    calls = []
+    monkeypatch.setattr(
+        "outset_ready.web.import_hosted_garmin_plan",
+        lambda _settings, **kwargs: calls.append(kwargs),
+    )
+    page = client.get(f"/calendar?on={start.isoformat()}")
+    valid = {
+        "csrf_token": csrf_from(page), "week_start": start.isoformat(),
+        "on": start.isoformat(), "view": "week", "source": "garmin",
+    }
+    assert client.post("/calendar/fetch-week", data=valid, follow_redirects=False).headers[
+        "location"
+    ].endswith("notice=plan-fetched")
+    assert calls == [{"user_id": "owner", "start_date": start,
+                      "end_date": start + timedelta(days=6)}]
+    assert client.post(
+        "/calendar/fetch-week", data={**valid, "source": "other"}
+    ).status_code == 400
+    assert client.post(
+        "/calendar/fetch-week", data={**valid, "week_start": (start - timedelta(days=7)).isoformat()}
+    ).status_code == 400
+    assert client.post("/calendar/fetch-week", data={**valid, "csrf_token": "wrong"}).status_code == 403
 
 
 def test_weekly_read_is_private_and_shows_completed_week_evidence(client, settings):
