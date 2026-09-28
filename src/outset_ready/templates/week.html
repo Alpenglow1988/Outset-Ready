@@ -287,29 +287,29 @@
 
         <section class="metric-section review-history-section">
           <div class="section-heading">
-            <div><p class="eyebrow">Review history</p><h2>Completed and available weeks</h2></div>
+            <div><p class="eyebrow">Review history</p><h2>Previous weeks</h2></div>
           </div>
           <ol class="weekly-review-history">
             {% for item in review_history %}
-              <li{% if item.review.period_start == review.period_start %} class="is-current"{% endif %}>
-                <a href="/week?review_id={{ item.review.id }}">
-                  <span>{{ item.review.period_start | date_label('%d %b') }} to {{ item.review.period_end | date_label('%d %b %Y') }}</span>
-                  <small>{{ item.review.status.value }}{% if item.interpretation and item.interpretation.status == interpretation_status.COMPLETED %} · interpreted{% endif %}</small>
+              <li class="week-history-item{% if item.review.period_start == review.period_start %} is-current{% endif %}">
+                <a class="week-history-link" href="/week?review_id={{ item.review.id }}" {% if item.review.id == review.id %}aria-current="page"{% endif %}>
+                  <span class="week-history-date">{% if item.review.period_start.month == item.review.period_end.month and item.review.period_start.year == item.review.period_end.year %}{{ item.review.period_start | date_label('%d') }}–{{ item.review.period_end | date_label('%d %b %Y') }}{% else %}{{ item.review.period_start | date_label('%d %b') }} – {{ item.review.period_end | date_label('%d %b %Y') }}{% endif %}</span>
+                  <span class="week-history-status">{{ 'Review available' if item.review.status == review_status.DRAFT else 'Finalised' }}{% if item.interpretation and item.interpretation.status == interpretation_status.COMPLETED %} · interpreted{% endif %}</span>
+                  <span aria-hidden="true">›</span>
                 </a>
+                {% if item.review.period_start == review.period_start and selected_week_revisions | length > 1 %}
+                  <details class="review-revisions">
+                    <summary>Earlier versions ({{ selected_week_revisions | length - 1 }})</summary>
+                    <ol>
+                      {% for earlier in selected_week_revisions[1:] %}
+                        <li><a href="/week?review_id={{ earlier.id }}">Revision {{ earlier.revision }} · {{ earlier.status.value }}</a>{% if earlier.id == review.id %} (viewing){% endif %}</li>
+                      {% endfor %}
+                    </ol>
+                  </details>
+                {% endif %}
               </li>
             {% endfor %}
           </ol>
-          {% if selected_week_revisions | length > 1 %}
-            <details class="review-revisions">
-              <summary>Earlier versions of {{ review.period_start | date_label('%d %b') }} to {{ review.period_end | date_label('%d %b %Y') }}</summary>
-              <ol>
-                {% for earlier in selected_week_revisions[1:] %}
-                  <li><a href="/week?review_id={{ earlier.id }}">Revision {{ earlier.revision }} · {{ earlier.status.value }}</a>{% if earlier.id == review.id %} (viewing){% endif %}</li>
-                {% endfor %}
-              </ol>
-            </details>
-          {% endif %}
-          <p class="field-hint">Unfinished reviews remain available. Ready starts each new week without penalising an open review.</p>
         </section>
       </main>
     </div>
