@@ -102,14 +102,35 @@
                {% if day.date == selected_day.date %}aria-current="date"{% endif %}>
               <strong>{{ day.date.day }}</strong>
               {% if day.sessions %}<span class="calendar-count">{{ day.sessions | length }} planned</span>{% endif %}
-              {% if day.activities %}<span class="calendar-count completed">{{ day.activities | length }} completed</span>{% endif %}
-              {% if day.has_other_evidence or day.observations %}<span class="calendar-count evidence">Evidence</span>{% endif %}
-              {% if day.alcohol_units is not none %}
-                <span class="calendar-indicator">
-                  <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><path d="M5 2h10l-1 6a4 4 0 0 1-8 0L5 2Zm5 10v6m-4 0h8"/></svg>
-                  Alcohol {{ '%g' | format(day.alcohol_units) }} unit{{ '' if day.alcohol_units == 1 else 's' }}
+              {% if day.sports or day.weight_kg is not none or day.calories is not none or day.protein_g is not none or day.alcohol_units is not none %}
+                <span class="calendar-indicators">
+                  {% for sport in day.sports %}
+                    <span class="calendar-indicator sport">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><circle cx="13" cy="3" r="1.5"/><path d="m4 17 4-5 2-2 3 2 2 5M6 7l3-2 3 2 4 1M8 12l-4 1"/></svg>
+                      {{ sport.name }}{% if sport.count > 1 %} ×{{ sport.count }}{% endif %}
+                    </span>
+                  {% endfor %}
+                  {% if day.weight_kg is not none %}
+                    <span class="calendar-indicator weight">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><rect x="2" y="3" width="16" height="14" rx="2"/><path d="M7 6h6l-1 3H8L7 6Zm3 1v2"/></svg>
+                      Weight {{ '%g' | format(day.weight_kg) }} kg
+                    </span>
+                  {% endif %}
+                  {% if day.calories is not none or day.protein_g is not none %}
+                    <span class="calendar-indicator food">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><path d="M3 2v6a3 3 0 0 0 6 0V2M6 2v16m9-16c-3 2-3 6-3 9h3v7m0-16v9"/></svg>
+                      Food{% if day.calories is not none %} {{ '%g' | format(day.calories) }} kcal{% endif %}{% if day.protein_g is not none %}{% if day.calories is not none %} ·{% endif %} {{ '%g' | format(day.protein_g) }} g protein{% endif %}
+                    </span>
+                  {% endif %}
+                  {% if day.alcohol_units is not none %}
+                    <span class="calendar-indicator alcohol">
+                      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true" focusable="false"><path d="M5 2h10l-1 6a4 4 0 0 1-8 0L5 2Zm5 10v6m-4 0h8"/></svg>
+                      Alcohol {{ '%g' | format(day.alcohol_units) }} unit{{ '' if day.alcohol_units == 1 else 's' }}
+                    </span>
+                  {% endif %}
                 </span>
               {% endif %}
+              {% if day.has_other_evidence or day.observations %}<span class="calendar-count evidence">Other evidence</span>{% endif %}
             </a>
           {% endfor %}
         </div>

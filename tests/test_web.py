@@ -201,14 +201,56 @@ def test_calendar_shows_dated_alcohol_indicators_only_with_optional_context(clie
             )
 
     hidden = client.get("/calendar?view=month&on=2026-09-14")
-    assert 'class="calendar-indicator"' not in hidden.text
+    assert 'class="calendar-indicator alcohol"' not in hidden.text
     month = client.get("/calendar?view=month&on=2026-09-14&optional=1")
-    assert month.text.count('class="calendar-indicator"') == 3
+    assert month.text.count('class="calendar-indicator alcohol"') == 3
     assert "Alcohol 5 units" in month.text
     assert "Alcohol 0 units" in month.text
     assert "Alcohol 1 unit" in month.text
     week = client.get("/calendar?view=week&on=2026-09-14&optional=1")
-    assert week.text.count('class="calendar-indicator"') == 3
+    assert week.text.count('class="calendar-indicator alcohol"') == 3
+
+
+def test_calendar_distinguishes_sport_weight_and_food_indicators(client, settings):
+    sign_in(client)
+    day = date(2026, 9, 14)
+    with connect(settings.database_target) as conn:
+        for index, activity_type in enumerate((ActivityType.RUN, ActivityType.RUN, ActivityType.SWIM)):
+            upsert_activity(
+                conn, ActivityRecord(
+                    source=EvidenceSource.GARMIN, external_id=f"sport-{index}",
+                    recorded_on=day, activity_type=activity_type,
+                ), user_id="owner",
+            )
+        upsert_daily_observation(
+            conn, DailyObservation(
+                recorded_on=day, source=EvidenceSource.GARMIN,
+                weight_kg=90, active_calories=400,
+            ), user_id="owner",
+        )
+        upsert_daily_observation(
+            conn, DailyObservation(
+                recorded_on=date(2026, 9, 15), source=EvidenceSource.GARMIN,
+                weight_kg=88.8,
+            ), user_id="owner",
+        )
+        for kind, value in (
+            (EvidenceKind.WEIGHT_KG, 89.5), (EvidenceKind.CALORIES, 500),
+            (EvidenceKind.CALORIES, 600), (EvidenceKind.PROTEIN_G, 40),
+        ):
+            add_manual_evidence(
+                conn, recorded_on=day, kind=kind, value=value, user_id="owner",
+            )
+
+    hidden = client.get("/calendar?view=month&on=2026-09-14")
+    assert "Run ×2" in hidden.text and "Swim" in hidden.text
+    assert "Weight 89.5 kg" in hidden.text and "Weight 88.8 kg" in hidden.text
+    assert 'class="calendar-indicator food"' not in hidden.text
+    shown = client.get("/calendar?view=month&on=2026-09-14&optional=1")
+    assert "Food 1100 kcal · 40 g protein" in shown.text
+    assert shown.text.count('class="calendar-indicator sport"') == 2
+    assert shown.text.count('class="calendar-indicator weight"') == 2
+    assert shown.text.count('class="calendar-indicator food"') == 1
 
 
 def test_calendar_fetches_a_past_week_and_preserves_month(client, monkeypatch):
