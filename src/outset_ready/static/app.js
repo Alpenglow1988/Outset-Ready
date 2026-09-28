@@ -34,4 +34,21 @@
   window.addEventListener("pageshow", () => {
     document.querySelectorAll("form[data-pending]").forEach(resetForm);
   });
+
+  const todayLink = document.querySelector("[data-calendar-today]");
+  if (todayLink) {
+    const setLocalToday = () => {
+      const now = new Date();
+      const day = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, "0"),
+        String(now.getDate()).padStart(2, "0"),
+      ].join("-");
+      const destination = new URL(todayLink.href);
+      destination.searchParams.set("on", day);
+      todayLink.href = destination.toString();
+    };
+    setLocalToday();
+    todayLink.addEventListener("click", setLocalToday);
+  }
 })();

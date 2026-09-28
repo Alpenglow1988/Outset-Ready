@@ -181,7 +181,7 @@ def test_calendar_today_control_preserves_view_and_optional_context(client):
         page = client.get(f"/calendar?view={view}&on=2026-09-01&optional=1")
         assert (
             f'href="/calendar?view={view}&amp;on={date.today().isoformat()}'
-            '&amp;optional=1" aria-label="Go to today"'
+            '&amp;optional=1" aria-label="Go to today" data-calendar-today'
         ) in page.text
 
 
