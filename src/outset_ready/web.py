@@ -1010,6 +1010,18 @@ def create_app(
                 item for item in reviews
                 if item.period_start == selected_review.period_start
             ]
+            selected_week_index = next(
+                index for index, item in enumerate(review_history)
+                if item["review"].period_start == selected_review.period_start
+            )
+            previous_week_id = (
+                review_history[selected_week_index + 1]["review"].id
+                if selected_week_index + 1 < len(review_history) else None
+            )
+            next_week_id = (
+                review_history[selected_week_index - 1]["review"].id
+                if selected_week_index > 0 else None
+            )
 
         snapshot = load_review_snapshot(selected_review.snapshot_json)
         newer_revision_exists = any(
@@ -1041,6 +1053,8 @@ def create_app(
                 "interpretation": interpretation,
                 "review_history": review_history,
                 "selected_week_revisions": selected_week_revisions,
+                "previous_week_id": previous_week_id,
+                "next_week_id": next_week_id,
                 "newer_revision_exists": newer_revision_exists,
                 "review_status": WeeklyReviewStatus,
                 "interpretation_status": InterpretationStatus,

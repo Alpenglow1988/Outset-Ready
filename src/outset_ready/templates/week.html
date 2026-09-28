@@ -38,6 +38,10 @@
             <p class="eyebrow">Weekly review · Revision {{ review.revision }}</p>
             <h1>{{ weekly_read.period_start | date_label('%d %B') }} to {{ weekly_read.period_end | date_label('%d %B %Y') }}</h1>
             <p class="lede">Check the completed Monday-to-Sunday evidence before you finalise its interpretation.</p>
+            <nav class="week-navigation" aria-label="Navigate weekly reviews">
+              {% if previous_week_id %}<a href="/week?review_id={{ previous_week_id }}" rel="prev">← Previous week</a>{% else %}<span aria-disabled="true">← Previous week</span>{% endif %}
+              {% if next_week_id %}<a href="/week?review_id={{ next_week_id }}" rel="next">Next week →</a>{% else %}<span aria-disabled="true">Next week →</span>{% endif %}
+            </nav>
           </div>
           <span class="status status-{{ weekly_read.assessment.state | lower | replace(' ', '-') }}">
             {{ weekly_read.assessment.state }}
