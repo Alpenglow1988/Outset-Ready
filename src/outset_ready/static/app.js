@@ -48,6 +48,8 @@
 
     const updateVisibility = () => {
       const visible = kind.value === "alcohol_units";
+      if (!visible && value.value === lastCalculated) value.value = "";
+      if (!visible) lastCalculated = null;
       calculator.hidden = !visible;
       calculator.querySelectorAll("input").forEach((input) => {
         input.disabled = !visible;
