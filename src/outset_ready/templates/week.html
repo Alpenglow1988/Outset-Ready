@@ -46,7 +46,7 @@
 
         {% if notice %}<p class="form-notice" role="status">{{ notice }}</p>{% endif %}
         {% if newer_revision_exists %}
-          <p class="form-notice" role="status">A newer evidence revision exists for this week. Open it from review history before making a new decision.</p>
+          <p class="form-notice" role="status">A newer evidence revision exists for this week. Open the current version from the week list below before making a new decision.</p>
         {% endif %}
 
         {% if review.status == review_status.DRAFT %}
@@ -291,15 +291,24 @@
           </div>
           <ol class="weekly-review-history">
             {% for item in review_history %}
-              <li{% if item.review.id == review.id %} class="is-current"{% endif %}>
+              <li{% if item.review.period_start == review.period_start %} class="is-current"{% endif %}>
                 <a href="/week?review_id={{ item.review.id }}">
                   <span>{{ item.review.period_start | date_label('%d %b') }} to {{ item.review.period_end | date_label('%d %b %Y') }}</span>
-                  <strong>Revision {{ item.review.revision }}</strong>
                   <small>{{ item.review.status.value }}{% if item.interpretation and item.interpretation.status == interpretation_status.COMPLETED %} · interpreted{% endif %}</small>
                 </a>
               </li>
             {% endfor %}
           </ol>
+          {% if selected_week_revisions | length > 1 %}
+            <details class="review-revisions">
+              <summary>Earlier versions of {{ review.period_start | date_label('%d %b') }} to {{ review.period_end | date_label('%d %b %Y') }}</summary>
+              <ol>
+                {% for earlier in selected_week_revisions[1:] %}
+                  <li><a href="/week?review_id={{ earlier.id }}">Revision {{ earlier.revision }} · {{ earlier.status.value }}</a>{% if earlier.id == review.id %} (viewing){% endif %}</li>
+                {% endfor %}
+              </ol>
+            </details>
+          {% endif %}
           <p class="field-hint">Unfinished reviews remain available. Ready starts each new week without penalising an open review.</p>
         </section>
       </main>
