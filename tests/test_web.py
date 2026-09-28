@@ -175,6 +175,16 @@ def test_calendar_is_private_and_displays_dated_plan_activity_and_evidence(clien
     assert "Easy run" in month.text
 
 
+def test_calendar_today_control_preserves_view_and_optional_context(client):
+    sign_in(client)
+    for view in ("month", "week"):
+        page = client.get(f"/calendar?view={view}&on=2026-09-01&optional=1")
+        assert (
+            f'href="/calendar?view={view}&amp;on={date.today().isoformat()}'
+            '&amp;optional=1" aria-label="Go to today" data-calendar-today'
+        ) in page.text
+
+
 def test_calendar_manual_entry_returns_to_selected_date(client, settings):
     sign_in(client)
     page = client.get("/calendar?view=month&on=2026-09-15")

@@ -632,6 +632,7 @@ def create_app(
                 "optional": optional,
                 "previous_url": calendar_url(previous),
                 "next_url": calendar_url(following),
+                "today_url": calendar_url(date.today()),
                 "week_url": calendar_url(selected, mode="week"),
                 "month_url": calendar_url(selected, mode="month"),
                 "optional_url": calendar_url(selected, show_optional=not optional),
