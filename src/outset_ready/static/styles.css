@@ -257,6 +257,10 @@ textarea { resize: vertical; }
 }
 @keyframes pending-spin { to { transform: rotate(360deg); } }
 .button-link { display: inline-block; text-decoration: none; }
+.alcohol-calculator { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--line); background: var(--sage); }
+.alcohol-calculator[hidden] { display: none; }
+.alcohol-calculator p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.alcohol-calculator [data-alcohol-result] { color: var(--pine); font-weight: 700; }
 .optional-inputs, .optional-read { border-top: 1px solid var(--line); padding-top: 14px; color: var(--muted); }
 .optional-inputs summary, .optional-read summary { cursor: pointer; color: var(--ink); font-size: 13px; font-weight: 700; }
 .optional-inputs p { margin: 10px 0; font-size: 12px; line-height: 1.5; }

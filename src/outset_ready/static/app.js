@@ -35,6 +35,52 @@
     document.querySelectorAll("form[data-pending]").forEach(resetForm);
   });
 
+  const calculator = document.querySelector("[data-alcohol-calculator]");
+  if (calculator) {
+    const form = calculator.closest("form");
+    const kind = form.elements.namedItem("kind");
+    const value = form.elements.namedItem("value");
+    const ml = form.elements.namedItem("drink_ml");
+    const abv = form.elements.namedItem("drink_abv");
+    const count = form.elements.namedItem("drink_count");
+    const result = calculator.querySelector("[data-alcohol-result]");
+    let lastCalculated = null;
+
+    const updateVisibility = () => {
+      const visible = kind.value === "alcohol_units";
+      if (!visible && value.value === lastCalculated) value.value = "";
+      if (!visible) lastCalculated = null;
+      calculator.hidden = !visible;
+      calculator.querySelectorAll("input").forEach((input) => {
+        input.disabled = !visible;
+      });
+    };
+
+    const calculate = () => {
+      const size = Number(ml.value);
+      const strength = Number(abv.value);
+      const drinks = Number(count.value);
+      if (!ml.value || !abv.value || !count.value ||
+          !Number.isFinite(size) || size <= 0 ||
+          !Number.isFinite(strength) || strength < 0 || strength > 100 ||
+          !Number.isInteger(drinks) || drinks < 1) {
+        if (value.value === lastCalculated) value.value = "";
+        lastCalculated = null;
+        result.textContent = "Enter a valid size, strength and number of drinks.";
+        return;
+      }
+      const units = (size * strength * drinks / 1000).toFixed(2);
+      value.value = units;
+      lastCalculated = units;
+      result.textContent = units + " UK unit" + (units === "1.00" ? "" : "s") +
+        " for " + drinks + " drink" + (drinks === 1 ? "" : "s") + ".";
+    };
+
+    kind.addEventListener("change", updateVisibility);
+    [ml, abv, count].forEach((input) => input.addEventListener("input", calculate));
+    updateVisibility();
+  }
+
   const todayLink = document.querySelector("[data-calendar-today]");
   if (todayLink) {
     const setLocalToday = () => {

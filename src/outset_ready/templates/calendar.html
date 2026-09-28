@@ -188,6 +188,14 @@
                 </select>
               </label>
               <label>Value <span>Leave blank for a context note</span><input type="number" name="value" step="any" inputmode="decimal"></label>
+              <div class="alcohol-calculator" data-alcohol-calculator hidden>
+                <p class="eyebrow">Calculate UK alcohol units</p>
+                <p>Enter one drink size and strength. Ready will fill the value above; you can adjust it before saving.</p>
+                <label>Drink size (ml)<input type="number" name="drink_ml" min="1" step="any" inputmode="decimal" placeholder="e.g. 440"></label>
+                <label>Strength (ABV %)<input type="number" name="drink_abv" min="0" max="100" step="any" inputmode="decimal" placeholder="e.g. 5"></label>
+                <label>Number of drinks<input type="number" name="drink_count" min="1" step="1" inputmode="numeric" value="1"></label>
+                <p role="status" aria-live="polite" data-alcohol-result>Enter size and strength to calculate units.</p>
+              </div>
               <label>Note <span>Required for a context note</span><textarea name="note" rows="3"></textarea></label>
               <button class="primary-button" type="submit" data-pending-label="Adding evidence">Add evidence</button>
             </form>
