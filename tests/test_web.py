@@ -37,6 +37,7 @@ from outset_ready.storage import (
     list_recent_evidence,
     list_weekly_reviews,
     load_connector_credentials,
+    mark_connector_reconnect_required,
     save_connector_credentials,
     start_connector_sync,
     upsert_activity,
@@ -233,6 +234,23 @@ def test_calendar_shows_fetch_actions_for_each_week_with_saved_connection(client
     second_week_first_day = month.text.index('on=2026-09-07&amp;optional=0', second_week)
     assert first_week < first_day < second_week < second_week_first_day
     assert month.text.count("Fetch this week from Garmin") == 5
+
+
+def test_calendar_explains_when_garmin_fetch_needs_reconnection(client, settings):
+    sign_in(client)
+    with connect(settings.database_target) as conn:
+        save_connector_credentials(
+            conn, connector="garmin", encrypted_credentials="test-token",
+            status=ConnectorConnectionStatus.TOKEN_SAVED, user_id="owner",
+        )
+        mark_connector_reconnect_required(conn, connector="garmin", user_id="owner")
+    month = client.get("/calendar?view=month&on=2026-09-14&notice=reconnect")
+    assert month.text.count("Reconnect Garmin to fetch") == 5
+    assert 'action="/calendar/fetch-week"' not in month.text
+    assert "Garmin needs a new connection" in month.text
+    week = client.get("/calendar?view=week&on=2026-09-14")
+    assert "Reconnect Garmin" in week.text
+    assert 'action="/calendar/fetch-week"' not in week.text
 
 
 def test_calendar_fetches_only_elapsed_days_in_current_week(client, monkeypatch):
